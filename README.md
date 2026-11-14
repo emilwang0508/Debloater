@@ -1,6 +1,6 @@
-# ColorOS Debloater
+# Debloater
 
-在 ColorOS 上通过 Shizuku 查询与管理应用包。支持按应用名称或包名搜索、停用、当前 Android 用户卸载、恢复预装包，以及查看包管理器错误。
+在 Android设备上 上通过 Shizuku 查询与管理应用包。支持按应用名称或包名搜索、停用、当前 Android 用户卸载、恢复预装包，以及查看包管理器错误。
 
 1. 在手机上通过无线调试或 USB ADB 启动 Shizuku。
 2. 打开应用，点「连接或授权 Shizuku」并完成授权。

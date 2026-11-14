@@ -28,6 +28,8 @@ class PackageService(private val context: Context) : IPackageService.Stub() {
         }
         if (operation == "user") return Bundle().apply { putInt("user", user) }
 
+        if (operation == "inventory") return inventory(user)
+
         if (operation != "list" && operation != "system") {
             require(packageNamePattern.matches(packageName)) { "包名无效" }
         }
@@ -70,6 +72,34 @@ class PackageService(private val context: Context) : IPackageService.Stub() {
             check(user == expectedUser) { "当前 Android 用户已切换，请重新确认操作。" }
         }
         return run(*command.toTypedArray()).apply { putInt("user", user) }
+    }
+
+    private fun inventory(user: Int): Bundle {
+        fun packages(vararg flags: String): Set<String> {
+            val result = run("pm", "list", "packages", "--user", user.toString(), *flags)
+            check(result.getInt("exit") == 0 && !result.getBoolean("truncated")) {
+                "无法完整读取应用列表：${result.getString("output").orEmpty().take(300)}"
+            }
+            return result.getString("output").orEmpty().lineSequence()
+                .filter { it.startsWith("package:") }.map { it.removePrefix("package:").trim() }.toSet()
+        }
+        val all = packages("-u")
+        val installed = packages()
+        val system = packages("-s", "-u")
+        val disabled = packages("-d")
+        val rows = (all + installed).map { name ->
+            val kind = if (name in system) "system" else "user"
+            val state = when {
+                name !in installed -> "removed"
+                name in disabled -> "disabled"
+                else -> "installed"
+            }
+            "$kind|$state|$name"
+        }
+        return Bundle().apply {
+            putInt("user", user)
+            putStringArrayList("packages", ArrayList(rows))
+        }
     }
 
     private fun run(vararg command: String): Bundle {

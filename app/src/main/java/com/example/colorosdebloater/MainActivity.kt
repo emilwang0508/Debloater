@@ -15,7 +15,15 @@ import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.view.Gravity
 import android.view.inputmethod.InputMethodManager
-import android.widget.Switch
+import android.widget.ArrayAdapter
+import android.widget.ListView
+import android.widget.Spinner
+import android.widget.AdapterView
+import android.widget.BaseAdapter
+import android.view.View
+import android.view.ViewGroup
+import android.text.TextWatcher
+import android.text.Editable
 import android.view.KeyEvent
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
@@ -31,23 +39,29 @@ import java.util.concurrent.Executors
 class MainActivity : Activity() {
     private val worker = Executors.newSingleThreadExecutor()
     private lateinit var status: TextView
-    private lateinit var results: LinearLayout
+    private data class AppRow(val name: String, val title: String, val kind: String, val state: String)
+    private lateinit var results: ListView
     private lateinit var query: EditText
-    private lateinit var systemOnly: Switch
+    private lateinit var scope: Spinner
+    private lateinit var summary: TextView
+    private var inventory: List<AppRow>? = null
+    private var inventoryUser = -1
+    private var loadingInventory = false
+    private val scopes = listOf("已安装", "系统应用", "用户应用", "已停用", "已卸载")
     private var service: IPackageService? = null
     private var binding = false
-    private var searchGeneration = 0
     private var shellTranscript = ""
     private val shellHistory = mutableListOf<String>()
     private var shellBusy = false
     private var terminalRefresh: (() -> Unit)? = null
     private val args by lazy {
         Shizuku.UserServiceArgs(ComponentName(this, PackageService::class.java))
-            .processNameSuffix("package_service").daemon(false).version(4)
+            .processNameSuffix("package_service").daemon(false).version(5)
     }
     private val received = Shizuku.OnBinderReceivedListener { connect() }
     private val dead = Shizuku.OnBinderDeadListener {
         service = null
+        invalidateInventory()
         binding = false
         status.text = "Shizuku 服务已断开"
     }
@@ -61,11 +75,13 @@ class MainActivity : Activity() {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             service = IPackageService.Stub.asInterface(binder)
             binding = false
-            status.text = "Shizuku 已授权，包管理服务已连接"
+            status.text = "Shizuku 已连接"
+            loadInventory()
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
             service = null
+            invalidateInventory()
             binding = false
             status.text = "包管理服务已断开，请重新连接"
         }
@@ -103,47 +119,65 @@ class MainActivity : Activity() {
         connectionCard.addView(status)
         connectionCard.addView(action("连接 / 授权") { connect(requestPermission = true) })
 
-        val searchCard = card(root)
-        searchCard.addView(label("查找应用", 20f, bold = true))
         query = EditText(this).apply {
-            hint = "输入应用名称或包名"
+            hint = "搜索应用名称或包名"
             isSingleLine = true
             imeOptions = EditorInfo.IME_ACTION_SEARCH
+            setText(savedInstanceState?.getString("searchQuery").orEmpty())
         }
-        query.setText(savedInstanceState?.getString("searchQuery").orEmpty())
-        searchCard.addView(query)
-        systemOnly = Switch(this).apply {
-            text = "仅显示系统应用"
-            isChecked = savedInstanceState?.getBoolean("systemOnly") == true
-            minHeight = dp(48)
+        root.addView(query)
+        scope = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, scopes)
+            minimumHeight = dp(48)
+            contentDescription = "应用分类"
+            setSelection(savedInstanceState?.getInt("scope")?.coerceIn(scopes.indices) ?: 0)
         }
-        searchCard.addView(systemOnly)
-        fun submitSearch() {
-            getSystemService(InputMethodManager::class.java)
-                .hideSoftInputFromWindow(query.windowToken, 0)
-            search(if (systemOnly.isChecked) "system" else "list", query.text.toString().trim())
+        val controls = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        controls.addView(scope, LinearLayout.LayoutParams(0, -2, 1f))
+        fun control(text: String, press: () -> Unit) {
+            controls.addView(Button(this).apply {
+                this.text = text
+                isAllCaps = false
+                setOnClickListener { press() }
+            })
         }
-        query.setOnEditorActionListener { _, id, _ ->
-            if (id != EditorInfo.IME_ACTION_SEARCH) false else {
-                submitSearch()
-                true
-            }
-        }
-        searchCard.addView(action("搜索", primary = true) { submitSearch() })
-        results = column()
-        searchCard.addView(results)
-
-        val advanced = card(root)
-        advanced.addView(action("进阶工具") {
+        control("刷新") { loadInventory() }
+        control("工具") {
             showMenu("进阶工具", listOf(
                 "输入完整包名" to { openManualPackage() },
                 "ADB Shell 终端" to { showShell() }
             ))
+        }
+        root.addView(controls)
+        summary = label("连接 Shizuku 后加载应用", 14f)
+        summary.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        root.addView(summary)
+        results = ListView(this).apply {
+            adapter = appAdapter
+            setOnItemClickListener { _, _, index, _ ->
+                val row = appAdapter.getItem(index)
+                openPackage(row.name, row.title, row.state)
+            }
+        }
+        root.addView(results, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        query.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = renderInventory()
+            override fun afterTextChanged(s: Editable?) = Unit
         })
-        setContentView(ScrollView(this).apply {
-            isFillViewport = true
-            addView(root, MATCH_PARENT, -2)
-        })
+        query.setOnEditorActionListener { _, id, _ ->
+            if (id == EditorInfo.IME_ACTION_SEARCH) {
+                getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(query.windowToken, 0)
+                true
+            } else false
+        }
+        scope.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) = renderInventory()
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+        root.isFocusableInTouchMode = true
+        root.requestFocus()
+        setContentView(root)
 
         Shizuku.addBinderDeadListener(dead)
         Shizuku.addRequestPermissionResultListener(permission)
@@ -244,7 +278,14 @@ class MainActivity : Activity() {
         dialog.show()
     }
 
-    private fun openPackage(name: String, title: String) {
+    private fun openPackage(name: String, title: String, state: String? = null) {
+        if (state == "removed") {
+            showMenu(name, listOf(
+                "恢复当前用户安装" to { change(name, "restore", "恢复安装") },
+                "查看应用详情" to { run("details", name, done = ::display) }
+            ))
+            return
+        }
         val actions = mutableListOf<Pair<String, () -> Unit>>(
             "查看应用详情" to { run("details", name, done = ::display) },
             "查询后台限制" to { run("background-status", name, done = ::display) }
@@ -278,7 +319,10 @@ class MainActivity : Activity() {
                 .setTitle("确认${label}")
                 .setMessage("目标：$name\n当前 Android 用户：$user\n系统组件的状态变更可能影响相关功能。")
                 .setNegativeButton("取消", null)
-                .setPositiveButton(label) { _, _ -> run(operation, name, user, done = ::display) }
+                .setPositiveButton(label) { _, _ -> run(operation, name, user) { result ->
+                    display(result)
+                    if (operation in setOf("disable", "enable", "uninstall", "restore")) loadInventory()
+                } }
                 .show()
         }
     }
@@ -306,48 +350,101 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun search(operation: String, term: String) {
-        val generation = ++searchGeneration
-        results.removeAllViews()
-        val summary = label("正在搜索…", 14f)
-        results.addView(summary)
-        run(operation, failed = {
-            if (generation == searchGeneration) summary.text = it
-        }) { result ->
-            if (generation != searchGeneration) return@run
-            if (result.getInt("exit") != 0) {
-                summary.text = "搜索未完成"
-                display(result)
-                return@run
+    private val appAdapter = object : BaseAdapter() {
+        var rows = emptyList<AppRow>()
+        override fun getCount() = rows.size
+        override fun getItem(position: Int) = rows[position]
+        override fun getItemId(position: Int) = position.toLong()
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val cell = convertView as? LinearLayout ?: column().apply {
+                setPadding(dp(12), dp(9), dp(12), dp(9))
+                minimumHeight = dp(64)
+                addView(label("", 16f, bold = true))
+                addView(label("", 13f))
             }
-            val names = result.getString("output").orEmpty().lineSequence()
-                .filter { it.startsWith("package:") }.map { it.removePrefix("package:").trim() }.toSet()
-            @Suppress("DEPRECATION")
-            val localeLabels = packageManager.getInstalledApplications(0)
-                .filter { it.packageName in names }
-                .associate { it.packageName to it.loadLabel(packageManager).toString() }
-            val keywords = term.split(Regex("\\s+")).filter { it.isNotBlank() }
-            val matches = names.map { it to localeLabels[it].orEmpty() }
-                .filter { (id, title) ->
-                    keywords.all { keyword -> id.contains(keyword, true) || title.contains(keyword, true) }
-                }
-                .sortedWith(compareByDescending<Pair<String, String>> { (id, title) ->
-                    when {
-                        title.equals(term, true) || id.equals(term, true) -> 3
-                        title.startsWith(term, true) || id.startsWith(term, true) -> 2
-                        title.contains(term, true) || id.contains(term, true) -> 1
-                        else -> 0
+            val row = getItem(position)
+            (cell.getChildAt(0) as TextView).text = row.title.ifBlank { row.name }
+            val kind = if (row.kind == "system") "系统应用" else "用户应用"
+            val state = when (row.state) {
+                "removed" -> "当前用户未安装"
+                "disabled" -> "已停用"
+                else -> "已启用"
+            }
+            (cell.getChildAt(1) as TextView).text =
+                if (row.title.isBlank()) "$kind · $state" else "${row.name}\n$kind · $state"
+            return cell
+        }
+    }
+
+    private fun invalidateInventory() {
+        inventory = null
+        loadingInventory = false
+        appAdapter.rows = emptyList()
+        appAdapter.notifyDataSetChanged()
+        summary.text = "连接 Shizuku 后加载应用"
+    }
+
+    private fun loadInventory() {
+        if (loadingInventory) return
+        val connection = service
+        loadingInventory = true
+        summary.text = "正在读取应用列表…"
+        run("inventory", failed = {
+            if (service === connection) {
+                loadingInventory = false
+                summary.text = it
+            }
+        }) { data ->
+            if (service !== connection) return@run
+            val rows = data.getStringArrayList("packages").orEmpty()
+            val user = data.getInt("user")
+            worker.execute {
+                @Suppress("DEPRECATION")
+                val labels = runCatching {
+                    packageManager.getInstalledApplications(PackageManager.MATCH_UNINSTALLED_PACKAGES)
+                        .associateBy { it.packageName }
+                }.getOrDefault(emptyMap())
+                val parsed = rows.mapNotNull {
+                    val fields = it.split('|', limit = 3)
+                    if (fields.size != 3) return@mapNotNull null
+                    val (kind, state, name) = fields
+                    val title = labels[name]?.let { info ->
+                        runCatching { info.loadLabel(packageManager).toString() }.getOrDefault("")
+                    }.orEmpty()
+                    AppRow(name, title, kind, state)
+                }.sortedWith(compareBy<AppRow, String>(String.CASE_INSENSITIVE_ORDER) {
+                    it.title.ifBlank { it.name }
+                }.thenBy { it.name })
+                runOnUiThread {
+                    if (!isDestroyed && !isFinishing && service === connection) {
+                        loadingInventory = false
+                        inventory = parsed
+                        inventoryUser = user
+                        renderInventory()
                     }
-                }.thenBy { it.first })
-            val limit = 40
-            summary.text = if (matches.isEmpty()) "没有匹配应用" else "${matches.size} 个结果" +
-                if (matches.size > limit) "（前 $limit 个，请缩小搜索范围）" else ""
-            for ((name, title) in matches.take(limit)) {
-                results.addView(action(if (title.isBlank()) name else "$title\n$name") {
-                    openPackage(name, title)
-                })
+                }
             }
         }
+    }
+
+    private fun renderInventory() {
+        val apps = inventory ?: return
+        val term = query.text.toString().trim()
+        val words = term.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        appAdapter.rows = apps.filter { row ->
+            val inScope = when (scope.selectedItemPosition) {
+                1 -> row.kind == "system" && row.state != "removed"
+                2 -> row.kind == "user" && row.state != "removed"
+                3 -> row.state == "disabled"
+                4 -> row.state == "removed"
+                else -> row.state != "removed"
+            }
+            inScope && words.all { row.title.contains(it, true) || row.name.contains(it, true) }
+        }
+        appAdapter.notifyDataSetChanged()
+        results.setSelection(0)
+        summary.text = if (appAdapter.count == 0) "没有匹配的应用"
+            else "${appAdapter.count} 个应用 · 用户 $inventoryUser"
     }
 
     private fun showShell() {
@@ -483,7 +580,7 @@ class MainActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putString("searchQuery", query.text.toString())
-        outState.putBoolean("systemOnly", systemOnly.isChecked)
+        outState.putInt("scope", scope.selectedItemPosition)
     }
 
     override fun onDestroy() {

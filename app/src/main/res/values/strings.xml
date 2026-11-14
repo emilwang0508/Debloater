@@ -57,7 +57,7 @@
     <string name="force_stop_effect">The app will stop running. Unsaved changes may be lost.</string>
     <string name="component_effect">Changes to system components may affect related features.</string>
     <string name="confirm_action">Confirm: %1$s</string>
-    <string name="action_target">Package: %1$s\nAndroid user: %2$s\n%3$s</string>
+    <string name="action_target">Package: %1$s\nAndroid user: %2$d\n%3$s</string>
     <string name="operation_incomplete">Operation incomplete</string>
     <string name="connect_to_retry">Connect or authorize Shizuku, then try again.</string>
     <string name="execution_failed">Execution failed: %1$s</string>
@@ -72,7 +72,7 @@
     <string name="shell_intro">Enter id to check the shell identity. Pipes are supported. Commands time out after about 20 seconds.\n</string>
     <string name="output_truncated">Output truncated\n</string>
     <string name="execution_timeout">Execution timed out\n</string>
-    <string name="shell_exit">[Exit code %1$s]\n\n</string>
+    <string name="shell_exit">[Exit code %1$d]\n\n</string>
     <string name="uninstall_internal">Android reported an internal uninstall error. Check the package details for the current user and check device policy or vendor restrictions.</string>
     <string name="uninstall_policy">Check uninstall restrictions set by a device administrator or owner.</string>
     <string name="uninstall_user_restricted">Check uninstall restrictions for the current Android user.</string>
@@ -81,7 +81,7 @@
     <string name="force_stop_accepted">Android accepted the force-stop command. The app’s enabled state is unchanged.</string>
     <string name="background_restricted">Background activity is restricted</string>
     <string name="background_default_allowed">The system default allows background activity</string>
-    <string name="user_exit">User %1$s · Exit code %2$s</string>
+    <string name="user_exit">User %1$d · Exit code %2$d</string>
     <string name="disable_unverified">App disablement could not be confirmed</string>
     <string name="change_unverified">Change could not be confirmed</string>
     <string name="operation_result">Operation result</string>
@@ -94,7 +94,7 @@
     <string name="verified_default">Confirmed: using the system default</string>
     <string name="verified_restricted">Confirmed: background restriction applied</string>
     <string name="unverified_background">Could not confirm the change. Check the reported state.</string>
-    <string name="state_readback">Reported state (exit code %1$s)</string>
+    <string name="state_readback">Reported state (exit code %1$d)</string>
     <string name="verified_frozen">Confirmed: app suspended</string>
     <string name="verified_unfrozen">Confirmed: app unsuspended</string>
     <string name="unverified_frozen">Could not confirm the change: the app is not suspended.</string>

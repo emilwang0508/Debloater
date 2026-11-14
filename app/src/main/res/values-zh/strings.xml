@@ -57,7 +57,7 @@
     <string name="force_stop_effect">将结束应用当前运行，未保存的内容可能丢失。</string>
     <string name="component_effect">系统组件的状态变更可能影响相关功能。</string>
     <string name="confirm_action">确认%1$s</string>
-    <string name="action_target">目标：%1$s\n当前 Android 用户：%2$s\n%3$s</string>
+    <string name="action_target">目标：%1$s\n当前 Android 用户：%2$d\n%3$s</string>
     <string name="operation_incomplete">操作未完成</string>
     <string name="connect_to_retry">请先连接或授权 Shizuku，连接完成后再重试</string>
     <string name="execution_failed">执行失败：%1$s</string>
@@ -72,7 +72,7 @@
     <string name="shell_intro">输入 id 查看 Shell 身份。支持管道，单次等待约 20 秒。\n</string>
     <string name="output_truncated">输出已截断\n</string>
     <string name="execution_timeout">执行超时\n</string>
-    <string name="shell_exit">[退出码 %1$s]\n\n</string>
+    <string name="shell_exit">[退出码 %1$d]\n\n</string>
     <string name="uninstall_internal">包管理器返回内部卸载错误。这个错误码无法定位原因。请用包详情核对当前用户的 installed/enabled 状态和系统包标记，再核对设备管理策略及设备厂商的限制。</string>
     <string name="uninstall_policy">请核对设备管理应用或设备所有者设置的卸载限制。</string>
     <string name="uninstall_user_restricted">请核对当前 Android 用户的卸载限制。</string>
@@ -81,7 +81,7 @@
     <string name="force_stop_accepted">系统已接受强行停止命令，应用的启用状态不变。</string>
     <string name="background_restricted">已限制后台运行</string>
     <string name="background_default_allowed">使用系统默认规则，允许后台运行</string>
-    <string name="user_exit">用户 %1$s · 退出码 %2$s</string>
+    <string name="user_exit">用户 %1$d · 退出码 %2$d</string>
     <string name="disable_unverified">未确认应用已停用</string>
     <string name="change_unverified">未确认设置生效</string>
     <string name="operation_result">操作结果</string>
@@ -94,7 +94,7 @@
     <string name="verified_default">已确认：使用系统默认规则</string>
     <string name="verified_restricted">已确认：后台限制已写入</string>
     <string name="unverified_background">未能确认设置生效，请检查回读状态。</string>
-    <string name="state_readback">状态回读（退出码 %1$s）</string>
+    <string name="state_readback">状态回读（退出码 %1$d）</string>
     <string name="verified_frozen">已确认：应用已挂起</string>
     <string name="verified_unfrozen">已确认：应用已解除挂起</string>
     <string name="unverified_frozen">未能确认设置生效：系统回读显示应用未挂起。</string>

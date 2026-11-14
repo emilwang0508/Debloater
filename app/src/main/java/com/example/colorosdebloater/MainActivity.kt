@@ -8,6 +8,13 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.IBinder
 import android.graphics.Typeface
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
+import android.content.res.ColorStateList
+import android.view.Gravity
+import android.view.inputmethod.InputMethodManager
+import android.widget.Switch
 import android.view.KeyEvent
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
@@ -23,10 +30,8 @@ import java.util.concurrent.Executors
 class MainActivity : Activity() {
     private val worker = Executors.newSingleThreadExecutor()
     private lateinit var status: TextView
-    private lateinit var output: TextView
     private lateinit var results: LinearLayout
     private lateinit var query: EditText
-    private lateinit var pkg: EditText
     private var service: IPackageService? = null
     private var binding = false
     private var searchGeneration = 0
@@ -66,63 +71,63 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            val padding = (16 * resources.displayMetrics.density).toInt()
-            setPadding(padding, padding, padding, padding)
+        val root = column().apply {
+            setBackgroundColor(Color.rgb(242, 246, 243))
             setOnApplyWindowInsetsListener { view, insets ->
                 @Suppress("DEPRECATION")
-                view.setPadding(padding + insets.systemWindowInsetLeft,
-                    padding + insets.systemWindowInsetTop,
-                    padding + insets.systemWindowInsetRight,
-                    padding + insets.systemWindowInsetBottom)
+                view.setPadding(dp(20) + insets.systemWindowInsetLeft,
+                    dp(18) + insets.systemWindowInsetTop,
+                    dp(20) + insets.systemWindowInsetRight,
+                    dp(24) + insets.systemWindowInsetBottom)
                 insets
             }
         }
-        status = TextView(this)
-        query = EditText(this).apply { hint = "应用名或包名，多个关键词用空格分隔" }
-        pkg = EditText(this).apply { hint = "完整包名"; isSingleLine = true }
-        output = TextView(this).apply { setTextIsSelectable(true) }
-        results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(status)
-        fun heading(text: String) = root.addView(TextView(this).apply {
-            this.text = text
-            textSize = 19f
-            setTypeface(null, Typeface.BOLD)
-            setPadding(0, 20, 0, 4)
+        root.addView(label("应用管理", 32f, bold = true))
+        status = label("", 14f)
+        val connectionCard = card(root)
+        connectionCard.addView(label("Shizuku 连接", 18f, bold = true))
+        connectionCard.addView(status)
+        connectionCard.addView(action("连接 / 授权") { connect(requestPermission = true) })
+
+        val searchCard = card(root)
+        searchCard.addView(label("查找应用", 20f, bold = true))
+        query = EditText(this).apply {
+            hint = "输入应用名称或包名"
+            isSingleLine = true
+            imeOptions = EditorInfo.IME_ACTION_SEARCH
+        }
+        searchCard.addView(query)
+        val systemOnly = Switch(this).apply {
+            text = "仅显示系统应用"
+            minHeight = dp(48)
+        }
+        searchCard.addView(systemOnly)
+        fun submitSearch() {
+            getSystemService(InputMethodManager::class.java)
+                .hideSoftInputFromWindow(query.windowToken, 0)
+            search(if (systemOnly.isChecked) "system" else "list", query.text.toString().trim())
+        }
+        query.setOnEditorActionListener { _, id, _ ->
+            if (id != EditorInfo.IME_ACTION_SEARCH) false else {
+                submitSearch()
+                true
+            }
+        }
+        searchCard.addView(action("搜索", primary = true) { submitSearch() })
+        results = column()
+        searchCard.addView(results)
+
+        val advanced = card(root)
+        advanced.addView(action("进阶工具") {
+            showMenu("进阶工具", listOf(
+                "输入完整包名" to { openManualPackage() },
+                "ADB Shell 终端" to { showShell() }
+            ))
         })
-        fun button(title: String, action: () -> Unit) {
-            root.addView(Button(this).apply { text = title; setOnClickListener { action() } })
-        }
-        button("连接或授权 Shizuku") { connect(requestPermission = true) }
-        heading("程序包搜索")
-        root.addView(query)
-        button("搜索系统应用") { search("system", query.text.toString().trim()) }
-        button("模糊搜索程序包") { search("list", query.text.toString().trim()) }
-        root.addView(results)
-        heading("应用管理")
-        root.addView(pkg)
-        button("包详情与诊断") { withPackage { run("details", it, done = ::display) } }
-        button("应用操作") {
-            showMenu("应用操作", listOf(
-                "停用" to { change("disable", "停用") },
-                "重新启用" to { change("enable", "重新启用") },
-                "为当前用户卸载" to { change("uninstall", "卸载") },
-                "恢复当前用户安装" to { change("restore", "恢复安装") },
-                "查看安装路径" to { withPackage { run("path", it, done = ::display) } }
-            ))
-        }
-        button("后台限制（AppOps）") {
-            showMenu("后台限制（AppOps）", listOf(
-                "查询状态" to { withPackage { run("background-status", it, done = ::display) } },
-                "限制后台运行" to { change("background-restrict", "限制后台运行") },
-                "恢复系统默认" to { change("background-reset", "恢复系统默认") }
-            ))
-        }
-        heading("命令工具")
-        button("ADB Shell") { showShell() }
-        root.addView(output)
-        setContentView(ScrollView(this).apply { addView(root, MATCH_PARENT, -2) })
+        setContentView(ScrollView(this).apply {
+            isFillViewport = true
+            addView(root, MATCH_PARENT, -2)
+        })
 
         Shizuku.addBinderDeadListener(dead)
         Shizuku.addRequestPermissionResultListener(permission)
@@ -162,13 +167,93 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun withPackage(action: (String) -> Unit) {
-        val name = pkg.text.toString().trim()
-        if (packageNamePattern.matches(name) && name != packageName) action(name)
-        else output.text = "请输入有效的目标应用包名"
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+
+    private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+    private fun label(value: String, size: Float, bold: Boolean = false) = TextView(this).apply {
+        text = value
+        textSize = size
+        setTextColor(Color.rgb(23, 50, 41))
+        if (bold) setTypeface(null, Typeface.BOLD)
     }
 
-    private fun change(operation: String, label: String) = withPackage { name ->
+    private fun surface(color: Int) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(18).toFloat()
+    }
+
+    private fun card(parent: LinearLayout) = column().apply {
+        background = surface(Color.WHITE)
+        setPadding(dp(16), dp(14), dp(16), dp(14))
+        parent.addView(this, LinearLayout.LayoutParams(MATCH_PARENT, -2).apply {
+            topMargin = dp(14)
+        })
+    }
+
+    private fun action(value: String, primary: Boolean = false, onClick: () -> Unit) =
+        Button(this).apply {
+            text = value
+            isAllCaps = false
+            minHeight = dp(48)
+            gravity = Gravity.CENTER_VERTICAL or Gravity.START
+            setPadding(dp(14), dp(6), dp(14), dp(6))
+            val fill = if (primary) Color.rgb(23, 92, 71) else Color.rgb(232, 242, 236)
+            background = RippleDrawable(ColorStateList.valueOf(0x24000000), surface(fill), null)
+            setTextColor(if (primary) Color.WHITE else Color.rgb(23, 50, 41))
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, -2).apply { topMargin = dp(8) }
+            setOnClickListener { onClick() }
+        }
+
+    private fun openManualPackage() {
+        val input = EditText(this).apply {
+            hint = "例如 com.oplus.olc"
+            isSingleLine = true
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("输入完整包名")
+            .setView(input).setNegativeButton("取消", null).setPositiveButton("继续", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val name = input.text.toString().trim()
+                if (!packageNamePattern.matches(name)) {
+                    input.error = "请输入有效的完整包名"
+                    return@setOnClickListener
+                }
+                dialog.dismiss()
+                openPackage(name, "")
+            }
+        }
+        dialog.show()
+    }
+
+    private fun openPackage(name: String, title: String) {
+        val actions = mutableListOf<Pair<String, () -> Unit>>(
+            "查看应用详情" to { run("details", name, done = ::display) },
+            "查询后台限制" to { run("background-status", name, done = ::display) }
+        )
+        if (name != packageName) {
+            actions += "限制后台运行" to { change(name, "background-restrict", "限制后台运行") }
+            actions += "恢复后台默认设置" to { change(name, "background-reset", "恢复后台默认设置") }
+            actions += "更多操作" to {
+                showMenu(name, listOf(
+                    "停用应用" to { change(name, "disable", "停用应用") },
+                    "重新启用" to { change(name, "enable", "重新启用") },
+                    "为当前用户卸载" to { change(name, "uninstall", "卸载应用") },
+                    "恢复当前用户安装" to { change(name, "restore", "恢复安装") },
+                    "查看安装路径" to { run("path", name, done = ::display) }
+                ))
+            }
+        }
+        showMenu(if (title.isBlank()) name else "$title\n$name", actions)
+    }
+
+    private fun showResult(title: String, message: String) {
+        AlertDialog.Builder(this).setTitle(title).setMessage(message)
+            .setPositiveButton("关闭", null).show()
+            .findViewById<TextView>(android.R.id.message)?.setTextIsSelectable(true)
+    }
+
+    private fun change(name: String, operation: String, label: String) {
         run("user") { info ->
             val user = info.getInt("user", -1)
             AlertDialog.Builder(this)
@@ -184,7 +269,7 @@ class MainActivity : Activity() {
         operation: String,
         name: String = "",
         user: Int = -1,
-        failed: (String) -> Unit = { output.text = it },
+        failed: (String) -> Unit = { showResult("操作未完成", it) },
         done: (Bundle) -> Unit
     ) {
         val remote = service
@@ -193,7 +278,6 @@ class MainActivity : Activity() {
             connect()
             return
         }
-        output.text = "正在执行…"
         worker.execute {
             val result = runCatching { remote.execute(operation, name, user) }
             runOnUiThread {
@@ -207,9 +291,14 @@ class MainActivity : Activity() {
     private fun search(operation: String, term: String) {
         val generation = ++searchGeneration
         results.removeAllViews()
-        run(operation) { result ->
+        val summary = label("正在搜索…", 14f)
+        results.addView(summary)
+        run(operation, failed = {
+            if (generation == searchGeneration) summary.text = it
+        }) { result ->
             if (generation != searchGeneration) return@run
             if (result.getInt("exit") != 0) {
+                summary.text = "搜索未完成"
                 display(result)
                 return@run
             }
@@ -233,14 +322,11 @@ class MainActivity : Activity() {
                     }
                 }.thenBy { it.first })
             val limit = 40
-            output.text = "用户 ${result.getInt("user")} · ${matches.size} 个结果" +
+            summary.text = if (matches.isEmpty()) "没有匹配应用" else "${matches.size} 个结果" +
                 if (matches.size > limit) "（前 $limit 个，请缩小搜索范围）" else ""
-            if (matches.isEmpty()) results.addView(TextView(this).apply { text = "没有匹配应用" })
             for ((name, title) in matches.take(limit)) {
-                results.addView(Button(this).apply {
-                    text = if (title.isBlank()) name else "$title\n$name"
-                    isAllCaps = false
-                    setOnClickListener { pkg.setText(name); run("details", name, done = ::display) }
+                results.addView(action(if (title.isBlank()) name else "$title\n$name") {
+                    openPackage(name, title)
                 })
             }
         }
@@ -350,11 +436,29 @@ class MainActivity : Activity() {
             result.getInt("exit") == 124 -> "命令超时，请重新检查包状态后再操作。"
             else -> ""
         }
-        output.text = listOf(
+        val backgroundStatus = Regex("(?m)^RUN_ANY_IN_BACKGROUND: ([a-z_]+)")
+            .find(response)?.groupValues?.get(1)
+        val summary = when {
+            result.getString("verification") != null -> result.getString("verification").orEmpty()
+            backgroundStatus == "ignore" -> "已限制后台运行"
+            "Default mode: allow" in response -> "使用系统默认规则，允许后台运行"
+            else -> ""
+        }
+        val message = listOf(
+            summary,
             "用户 ${result.getInt("user")} · 退出码 ${result.getInt("exit")}",
-            result.getString("command").orEmpty(), result.getString("verification").orEmpty(),
+            result.getString("command").orEmpty(),
             hint, response.take(30_000)
         ).filter { it.isNotBlank() }.joinToString("\n\n")
+        val command = result.getString("command").orEmpty()
+        val title = when {
+            result.getInt("exit") != 0 -> "操作未完成"
+            command.startsWith("pm disable-user ") && "new state: disabled-user" !in response ->
+                "未确认应用已停用"
+            result.getString("verification")?.startsWith("未能确认") == true -> "未确认设置生效"
+            else -> "操作结果"
+        }
+        showResult(title, message)
     }
 
     override fun onDestroy() {

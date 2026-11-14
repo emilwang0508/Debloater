@@ -1,4 +1,4 @@
-package com.example.debloater;
+package com.naryo.debloater;
 
 import android.os.Bundle;
 

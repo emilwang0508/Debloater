@@ -1,4 +1,4 @@
-package com.example.debloater
+package com.naryo.debloater
 
 import android.app.Activity
 import android.app.AlertDialog

@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.debloater"
+    namespace = "com.naryo.debloater"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.example.debloater"
+        applicationId = "com.naryo.debloater"
         minSdk = 26
         targetSdk = 36
         versionCode = 9

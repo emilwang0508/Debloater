@@ -1,4 +1,4 @@
-package com.example.debloater
+package com.naryo.debloater
 
 import android.content.Context
 import android.os.Binder

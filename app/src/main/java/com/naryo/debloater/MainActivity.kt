@@ -61,7 +61,7 @@ class MainActivity : Activity() {
     private var terminalRefresh: (() -> Unit)? = null
     private val args by lazy {
         Shizuku.UserServiceArgs(ComponentName(this, PackageService::class.java))
-            .processNameSuffix("package_service").daemon(false).version(5)
+            .processNameSuffix("package_service").daemon(false).version(6)
     }
     private val received = Shizuku.OnBinderReceivedListener { connect() }
     private val dead = Shizuku.OnBinderDeadListener {
@@ -300,6 +300,8 @@ class MainActivity : Activity() {
         if (name != packageName) {
             actions += "限制后台运行" to { change(name, "background-restrict", "限制后台运行") }
             actions += "恢复后台默认设置" to { change(name, "background-reset", "恢复后台默认设置") }
+            actions += "冻结应用" to { change(name, "freeze", "冻结应用") }
+            actions += "解除冻结" to { change(name, "unfreeze", "解除冻结") }
             actions += "更多操作" to {
                 showMenu(name, listOf(
                     "停用应用" to { change(name, "disable", "停用应用") },
@@ -322,9 +324,12 @@ class MainActivity : Activity() {
     private fun change(name: String, operation: String, label: String) {
         run("user") { info ->
             val user = info.getInt("user", -1)
+            val effect = if (operation == "freeze")
+                "挂起后，应用界面和通知会受限，后台服务仍可能运行。"
+            else "系统组件的状态变更可能影响相关功能。"
             AlertDialog.Builder(this)
                 .setTitle("确认${label}")
-                .setMessage("目标：$name\n当前 Android 用户：$user\n系统组件的状态变更可能影响相关功能。")
+                .setMessage("目标：$name\n当前 Android 用户：$user\n$effect")
                 .setNegativeButton("取消", null)
                 .setPositiveButton(label) { _, _ -> run(operation, name, user) { result ->
                     display(result)

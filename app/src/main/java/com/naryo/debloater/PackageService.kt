@@ -62,6 +62,26 @@ class PackageService(private val context: Context) : IPackageService.Stub() {
             "list" -> listOf("pm", "list", "packages", "-u", "--user", userId)
             "details" -> listOf("dumpsys", "package", packageName)
             "path" -> listOf("pm", "path", "--user", userId, packageName)
+            "freeze", "unfreeze" -> {
+                check(user == expectedUser) { "当前 Android 用户已切换，请重新确认操作。" }
+                val freeze = operation == "freeze"
+                val verb = if (freeze) "suspend" else "unsuspend"
+                val result = run("pm", verb, "--user", userId, packageName)
+                val prefix = "Package $packageName new suspended state: "
+                val suspended = result.getString("output").orEmpty().lineSequence()
+                    .firstOrNull { it.startsWith(prefix) }?.removePrefix(prefix)?.trim()
+                val verified = result.getInt("exit") == 0 && suspended == freeze.toString()
+                return result.apply {
+                    putInt("user", user)
+                    putString("verification", when {
+                        verified && freeze -> "已确认：应用已挂起"
+                        verified -> "已确认：应用已解除挂起"
+                        freeze && suspended == "false" -> "未能确认设置生效：系统回读显示应用未挂起。"
+                        !freeze && suspended == "true" -> "未能确认设置生效：系统回读显示应用仍被挂起。"
+                        else -> "未能确认设置生效：请查看命令输出。"
+                    })
+                }
+            }
             "disable" -> listOf("pm", "disable-user", "--user", userId, packageName)
             "uninstall" -> listOf("pm", "uninstall", "--user", userId, packageName)
             "restore" -> listOf("cmd", "package", "install-existing", "--user", userId, packageName)

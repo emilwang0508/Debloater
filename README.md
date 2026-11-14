@@ -13,6 +13,8 @@
 
 应用通过 Shizuku UserService 执行包管理命令。系统保护或设备策略可能拒绝卸载。遇到 `DELETE_FAILED_INTERNAL_ERROR` 时，界面会显示原始输出、退出码及排查提示。
 
+点选已安装的应用，可选择「冻结应用」或「解除冻结」。冻结使用 Android 挂起机制，限制应用界面和通知。操作结果按系统回读判断。
+
 ## 编译
 
 使用 JDK 17 或 21、Gradle 9.3.1、Android SDK 37.0 与 Build Tools 36.0.0。运行 `gradle assembleDebug lintDebug`，APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。项目以 API 37 编译，保留 API 36 作为目标版本。

@@ -28,7 +28,7 @@ class MainActivity : Activity() {
     private var searchGeneration = 0
     private val args by lazy {
         Shizuku.UserServiceArgs(ComponentName(this, PackageService::class.java))
-            .processNameSuffix("package_service").daemon(false).version(2)
+            .processNameSuffix("package_service").daemon(false).version(3)
     }
     private val received = Shizuku.OnBinderReceivedListener { connect() }
     private val dead = Shizuku.OnBinderDeadListener {
@@ -72,7 +72,7 @@ class MainActivity : Activity() {
             }
         }
         status = TextView(this)
-        query = EditText(this).apply { hint = "搜索应用名称或包名" }
+        query = EditText(this).apply { hint = "应用名或包名，多个关键词用空格分隔" }
         pkg = EditText(this).apply { hint = "完整包名"; isSingleLine = true }
         output = TextView(this).apply { setTextIsSelectable(true) }
         results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -83,11 +83,8 @@ class MainActivity : Activity() {
         button("连接或授权 Shizuku") { connect(requestPermission = true) }
         root.addView(query)
         button("搜索系统应用") { search("system", query.text.toString().trim()) }
-        button("搜索全部包（含卸载记录）") { search("list", query.text.toString().trim()) }
-        button("查找中国移动自动注册") {
-            query.setText("中国移动自动注册")
-            search("system", "中国移动自动注册")
-        }
+        button("模糊搜索程序包") { search("list", query.text.toString().trim()) }
+        button("ADB Shell") { showShell() }
         root.addView(results)
         root.addView(pkg)
         button("查看包详情与诊断") { withPackage { run("details", it, done = ::display) } }
@@ -109,7 +106,7 @@ class MainActivity : Activity() {
         try {
             when {
                 !Shizuku.pingBinder() -> status.text = "请先通过无线调试或 USB ADB 启动 Shizuku"
-                Shizuku.isPreV11() -> status.text = "请更新 Shizuku"
+                Shizuku.isPreV11() || Shizuku.getVersion() < 13 -> status.text = "请更新到 Shizuku 13 或更高版本"
                 Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED -> {
                     status.text = "等待 Shizuku 授权"
                     if (requestPermission) {
@@ -186,20 +183,23 @@ class MainActivity : Activity() {
             val localeLabels = packageManager.getInstalledApplications(0)
                 .filter { it.packageName in names }
                 .associate { it.packageName to it.loadLabel(packageManager).toString() }
-            val carrierHints = listOf("cmcc", "dmreg", "autoreg", "自注册", "自动注册", "中国移动")
+            val keywords = term.split(Regex("\\s+")).filter { it.isNotBlank() }
             val matches = names.map { it to localeLabels[it].orEmpty() }
                 .filter { (id, title) ->
-                    id.contains(term, true) || title.contains(term, true) ||
-                        term == "中国移动自动注册" && carrierHints.any { id.contains(it, true) || title.contains(it, true) }
+                    keywords.all { keyword -> id.contains(keyword, true) || title.contains(keyword, true) }
                 }
-                .sortedWith(compareByDescending<Pair<String, String>> { it.second == term }.thenBy { it.first })
+                .sortedWith(compareByDescending<Pair<String, String>> { (id, title) ->
+                    when {
+                        title.equals(term, true) || id.equals(term, true) -> 3
+                        title.startsWith(term, true) || id.startsWith(term, true) -> 2
+                        title.contains(term, true) || id.contains(term, true) -> 1
+                        else -> 0
+                    }
+                }.thenBy { it.first })
             val limit = 40
             output.text = "用户 ${result.getInt("user")} · ${matches.size} 个结果" +
                 if (matches.size > limit) "（前 $limit 个，请缩小搜索范围）" else ""
             if (matches.isEmpty()) results.addView(TextView(this).apply { text = "没有匹配应用" })
-            if (term == "中国移动自动注册" && matches.isNotEmpty()) {
-                results.addView(TextView(this).apply { text = "含关键词候选，请核对应用名称和包详情。" })
-            }
             for ((name, title) in matches.take(limit)) {
                 results.addView(Button(this).apply {
                     text = if (title.isBlank()) name else "$title\n$name"
@@ -208,6 +208,49 @@ class MainActivity : Activity() {
                 })
             }
         }
+    }
+
+    private fun showShell() {
+        val input = EditText(this).apply {
+            hint = "例如 id 或 pm list packages -s"
+            setSingleLine(false)
+            maxLines = 6
+            filters = arrayOf(android.text.InputFilter.LengthFilter(8192))
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("ADB Shell")
+            .setMessage("通过 Shizuku 以 ADB Shell 权限执行单条命令。支持管道，最长等待 20 秒。")
+            .setView(input)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("执行", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val command = input.text.toString().trim()
+                if (command.isEmpty()) {
+                    input.error = "请输入命令"
+                    return@setOnClickListener
+                }
+                dialog.dismiss()
+                run("shell", command) { result ->
+                    val lines = mutableListOf("退出码 ${result.getInt("exit")}")
+                    if (result.getBoolean("timedOut")) lines.add("执行超时")
+                    val response = result.getString("output").orEmpty()
+                    lines.add(response.take(30_000).ifBlank { "命令没有输出" })
+                    if (result.getBoolean("truncated") || response.length > 30_000) {
+                        lines.add("输出已截断，可缩小命令输出范围后重试。")
+                    }
+                    AlertDialog.Builder(this)
+                        .setTitle("Shell 执行结果")
+                        .setMessage(lines.joinToString("\n\n"))
+                        .setPositiveButton("关闭", null)
+                        .show()
+                        .findViewById<TextView>(android.R.id.message)?.setTextIsSelectable(true)
+                    output.text = "Shell 执行完成，退出码 ${result.getInt("exit")}"
+                }
+            }
+        }
+        dialog.show()
     }
 
     private fun display(result: Bundle) {

@@ -1,17 +1,26 @@
 package com.example.colorosdebloater
 
+import android.content.Context
+import android.os.Binder
 import android.os.Bundle
+import android.os.Process
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import kotlin.system.exitProcess
 
 internal val packageNamePattern = Regex("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+")
 
-class PackageService : IPackageService.Stub() {
+class PackageService(private val context: Context) : IPackageService.Stub() {
     override fun destroy() = exitProcess(0)
 
     @Synchronized
     override fun execute(operation: String, packageName: String, expectedUser: Int): Bundle {
+        if (operation == "shell") {
+            check(Binder.getCallingUid() == context.applicationInfo.uid) { "调用方无权执行 Shell 命令" }
+            check(Process.myUid() == 2000) { "请以无线调试或 USB ADB 启动 Shizuku" }
+            require(packageName.isNotBlank() && packageName.length <= 8192) { "命令为空或过长" }
+            return run("/system/bin/sh", "-c", packageName)
+        }
         val userResult = run("am", "get-current-user")
         val user = userResult.getString("output")?.trim()?.toIntOrNull()
         check(userResult.getInt("exit") == 0 && user != null && user >= 0) {
@@ -42,6 +51,7 @@ class PackageService : IPackageService.Stub() {
 
     private fun run(vararg command: String): Bundle {
         val process = ProcessBuilder(command.toList()).redirectErrorStream(true).start()
+        process.outputStream.close()
         val output = StringBuffer()
         val reader = thread(isDaemon = true) {
             runCatching {
@@ -63,6 +73,8 @@ class PackageService : IPackageService.Stub() {
             putString("command", command.joinToString(" "))
             putString("output", output.toString())
             putInt("exit", if (completed) process.exitValue() else 124)
+            putBoolean("timedOut", !completed)
+            putBoolean("truncated", output.length >= 150_000)
         }
     }
 }

@@ -26,6 +26,7 @@ import android.view.Gravity
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
 import android.widget.ListView
+import android.widget.AbsListView
 import android.widget.Spinner
 import android.widget.AdapterView
 import android.widget.BaseAdapter
@@ -55,7 +56,6 @@ class MainActivity : Activity() {
     private val icons = LruCache<String, Bitmap>(64)
     private val loadingIcons = mutableSetOf<String>()
     private val missingIcons = mutableSetOf<String>()
-    private lateinit var moreApps: Button
     private var matches = emptyList<AppRow>()
     private val pageSize = 30
     private lateinit var status: TextView
@@ -176,20 +176,32 @@ class MainActivity : Activity() {
         summary = label("连接 Shizuku 后加载应用", 14f)
         summary.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         root.addView(summary)
-        moreApps = Button(this).apply {
-            isAllCaps = false
-            visibility = View.GONE
-            setOnClickListener { showAppPage(appAdapter.count + pageSize) }
-        }
         results = ListView(this).apply {
             adapter = appAdapter
+            setOnScrollListener(object : AbsListView.OnScrollListener {
+                private var appendPending = false
+
+                override fun onScrollStateChanged(view: AbsListView?, state: Int) = Unit
+
+                override fun onScroll(view: AbsListView?, first: Int, visible: Int, total: Int) {
+                    if (appendPending || visible == 0 || total >= matches.size || first + visible < total - 5) return
+                    val currentMatches = matches
+                    appendPending = true
+                    post {
+                        appendPending = false
+                        if (isDestroyed || matches !== currentMatches) return@post
+                        if (lastVisiblePosition >= appAdapter.count - 6 && appAdapter.count < matches.size) {
+                            showAppPage(appAdapter.count + pageSize)
+                        }
+                    }
+                }
+            })
             setOnItemClickListener { _, _, index, _ ->
                 val row = appAdapter.getItem(index)
                 openPackage(row.name, row.title, row.state)
             }
         }
         root.addView(results, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
-        root.addView(moreApps)
         query.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = renderInventory()
@@ -480,7 +492,6 @@ class MainActivity : Activity() {
         inventory = null
         loadingInventory = false
         matches = emptyList()
-        moreApps.visibility = View.GONE
         appAdapter.rows = emptyList()
         appAdapter.notifyDataSetChanged()
         summary.text = "连接 Shizuku 后加载应用"
@@ -553,8 +564,6 @@ class MainActivity : Activity() {
         appAdapter.notifyDataSetChanged()
         val shown = appAdapter.count
         val remaining = matches.size - shown
-        moreApps.visibility = if (remaining > 0) View.VISIBLE else View.GONE
-        moreApps.text = "加载更多（还有 $remaining 个）"
         summary.text = when {
             shown == 0 -> "没有匹配的应用"
             remaining > 0 -> "已显示 $shown / ${matches.size} 个应用 · 用户 $inventoryUser"

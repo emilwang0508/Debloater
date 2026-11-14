@@ -12,6 +12,7 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.view.Gravity
 import android.view.inputmethod.InputMethodManager
 import android.widget.Switch
@@ -32,6 +33,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var results: LinearLayout
     private lateinit var query: EditText
+    private lateinit var systemOnly: Switch
     private var service: IPackageService? = null
     private var binding = false
     private var searchGeneration = 0
@@ -69,10 +71,22 @@ class MainActivity : Activity() {
         }
     }
 
+    private val nightMode: Boolean
+        get() = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+
+    private fun adaptive(light: Int, dark: Int): Int = if (nightMode) dark else light
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        setTheme(if (nightMode) android.R.style.Theme_Material_NoActionBar
+            else android.R.style.Theme_Material_Light_NoActionBar)
         super.onCreate(savedInstanceState)
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = if (nightMode) 0 else
+            android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
+                if (android.os.Build.VERSION.SDK_INT >= 26) android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0
         val root = column().apply {
-            setBackgroundColor(Color.rgb(242, 246, 243))
+            setBackgroundColor(adaptive(0xFFF2F6F3.toInt(), 0xFF121B17.toInt()))
             setOnApplyWindowInsetsListener { view, insets ->
                 @Suppress("DEPRECATION")
                 view.setPadding(dp(20) + insets.systemWindowInsetLeft,
@@ -96,9 +110,11 @@ class MainActivity : Activity() {
             isSingleLine = true
             imeOptions = EditorInfo.IME_ACTION_SEARCH
         }
+        query.setText(savedInstanceState?.getString("searchQuery").orEmpty())
         searchCard.addView(query)
-        val systemOnly = Switch(this).apply {
+        systemOnly = Switch(this).apply {
             text = "仅显示系统应用"
+            isChecked = savedInstanceState?.getBoolean("systemOnly") == true
             minHeight = dp(48)
         }
         searchCard.addView(systemOnly)
@@ -174,7 +190,7 @@ class MainActivity : Activity() {
     private fun label(value: String, size: Float, bold: Boolean = false) = TextView(this).apply {
         text = value
         textSize = size
-        setTextColor(Color.rgb(23, 50, 41))
+        setTextColor(adaptive(0xFF173229.toInt(), 0xFFE3F2E9.toInt()))
         if (bold) setTypeface(null, Typeface.BOLD)
     }
 
@@ -184,7 +200,7 @@ class MainActivity : Activity() {
     }
 
     private fun card(parent: LinearLayout) = column().apply {
-        background = surface(Color.WHITE)
+        background = surface(adaptive(Color.WHITE, 0xFF1D2A24.toInt()))
         setPadding(dp(16), dp(14), dp(16), dp(14))
         parent.addView(this, LinearLayout.LayoutParams(MATCH_PARENT, -2).apply {
             topMargin = dp(14)
@@ -198,9 +214,11 @@ class MainActivity : Activity() {
             minHeight = dp(48)
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
             setPadding(dp(14), dp(6), dp(14), dp(6))
-            val fill = if (primary) Color.rgb(23, 92, 71) else Color.rgb(232, 242, 236)
-            background = RippleDrawable(ColorStateList.valueOf(0x24000000), surface(fill), null)
-            setTextColor(if (primary) Color.WHITE else Color.rgb(23, 50, 41))
+            val fill = if (primary) adaptive(0xFF175C47.toInt(), 0xFFA5DDBF.toInt())
+                else adaptive(0xFFE8F2EC.toInt(), 0xFF2B4237.toInt())
+            background = RippleDrawable(ColorStateList.valueOf(if (nightMode && !primary) 0x24FFFFFF else 0x24000000), surface(fill), null)
+            setTextColor(if (primary) adaptive(Color.WHITE, 0xFF10291E.toInt())
+                else adaptive(0xFF173229.toInt(), 0xFFE3F2E9.toInt()))
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, -2).apply { topMargin = dp(8) }
             setOnClickListener { onClick() }
         }
@@ -333,7 +351,8 @@ class MainActivity : Activity() {
     }
 
     private fun showShell() {
-        val dialog = AlertDialog.Builder(this, android.R.style.Theme_Material_NoActionBar)
+        val dialog = AlertDialog.Builder(this, if (nightMode) android.R.style.Theme_Material_NoActionBar
+            else android.R.style.Theme_Material_Light_NoActionBar)
             .setTitle("ADB Shell")
             .setPositiveButton("关闭", null)
             .create()
@@ -459,6 +478,12 @@ class MainActivity : Activity() {
             else -> "操作结果"
         }
         showResult(title, message)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString("searchQuery", query.text.toString())
+        outState.putBoolean("systemOnly", systemOnly.isChecked)
     }
 
     override fun onDestroy() {

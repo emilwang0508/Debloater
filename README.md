@@ -1,22 +1,63 @@
 # Debloater
 
-在 Android 上通过 Shizuku 查询与管理应用包。支持按应用名称或包名搜索、停用、当前 Android 用户卸载、恢复预装包，以及查看包管理器错误。
+[简体中文](#简体中文) · [English](#english) · [APK / GitHub Release](https://github.com/emilwang0508/Debloater/releases/tag/v0.9.0)
 
-1. 在手机上通过无线调试或 USB ADB 启动 Shizuku。
-2. 打开应用，点「连接或授权 Shizuku」并完成授权。
-3. 在首页按应用名或包名即时搜索，可筛选已安装、系统、用户、停用或当前用户未安装的应用。多个关键词以空格分隔，所有词都匹配时才显示。
-4. 停用或卸载前核对确认框中的包名和 Android 用户编号。对当前用户卸载系统应用后，可用「恢复当前用户安装」尝试恢复，再按需启用。
+## 简体中文
 
-从搜索结果点选应用，或在「进阶工具」中输入完整包名。可查询状态、写入 `RUN_ANY_IN_BACKGROUND=ignore` 或恢复系统默认规则。修改后会回读当前 Android 用户的状态。后台限制写入后，应用仍可以处于启用状态。
+Debloater 是一款通过 Shizuku 管理 Android 应用的免 Root 工具。应用包名为 `com.naryo.debloater`。
 
-「进阶工具」里的 ADB Shell 需要以无线调试或 USB ADB 启动的 Shizuku 13 或更高版本。可连续输入命令，查看输出与退出码，使用「上一条」和「下一条」重用命令。每次执行启动一个独立 Shell，当前目录和变量随命令结束。
+### 安装与连接
 
-应用通过 Shizuku UserService 执行包管理命令。系统保护或设备策略可能拒绝卸载。遇到 `DELETE_FAILED_INTERNAL_ERROR` 时，界面会显示原始输出、退出码及排查提示。
+1. 打开 [v0.9.0 发布页](https://github.com/emilwang0508/Debloater/releases/tag/v0.9.0)，在 **Assets** 中下载 `Debloater-v0.9.0.apk` 并安装。APK 最低安装要求为 Android 8.0（API 26），实际使用还需要设备支持 Shizuku。
+2. 安装并启动 [Shizuku](https://shizuku.rikka.app/) 13 或更新版本，可使用无线调试或 USB ADB。
+3. 打开 Debloater，点「连接 / 授权」，允许 Shizuku 授权。旧版包名不同，可与本版并存，本版需要单独授权。
 
-点选已安装的应用，可选择「冻结应用」或「解除冻结」。冻结使用 Android 挂起机制，限制应用界面和通知。操作结果按系统回读判断。
+### 查找与管理应用
 
-## 编译
+输入应用名称或包名即可即时搜索。多个关键词用空格分隔，所有词都匹配时才显示。列表可筛选「已安装」「系统应用」「用户应用」「已停用」「已卸载」。滚动接近末尾时自动加载下一批，搜索覆盖当前分类的完整清单。可用的应用图标会随列表行加载。
 
-使用 JDK 17 或 21、Gradle 9.3.1、Android SDK 37.0 与 Build Tools 36.0.0。运行 `gradle assembleDebug lintDebug`，APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。项目以 API 37 编译，保留 API 36 作为目标版本。
+| 入口 | 用法 |
+| --- | --- |
+| 应用详情、安装路径 | 查看包管理器原始信息。知道包名时，也可在「工具」中手动输入。 |
+| 权限与通知 | 「应用权限」打开应用的系统详情页，再点系统页的「权限」。「应用通知」打开系统通知设置。 |
+| 后台限制 | 查询、限制后台运行或恢复默认设置。修改后回读 `RUN_ANY_IN_BACKGROUND` 状态。 |
+| 冻结 / 解除冻结 | 挂起或解除挂起当前用户的应用。挂起会限制打开界面和显示通知，后台服务仍可能运行。 |
+| 更多操作 | 可强行停止、停用、重新启用、为当前用户卸载，或尝试恢复当前用户安装。强行停止会结束当前运行，应用仍可再次启动。 |
+| 工具 → ADB Shell 终端 | 用以 ADB 模式启动的 Shizuku 执行命令，查看输出和退出码。支持命令历史，每条命令独立执行。 |
 
-Shizuku 授权与应用管理行为因设备和系统版本而异，需在真机验证。
+变更前请核对包名和 Android 用户编号。「恢复当前用户安装」只适用于系统仍保留安装包的情况。厂商保护或设备策略可能拒绝相关操作。看到退出码 `0` 时，仍应检查实际回读状态。若出现 `DELETE_FAILED_INTERNAL_ERROR`，可在操作结果中查看原始输出和诊断提示。
+
+## English
+
+Debloater is a rootless Android app-management tool powered by Shizuku. Its package ID is `com.naryo.debloater`. Menu names below include the Chinese labels shown in the app.
+
+### Install and connect
+
+1. Download `Debloater-v0.9.0.apk` from **Assets** on the [v0.9.0 release page](https://github.com/emilwang0508/Debloater/releases/tag/v0.9.0) and install it. The APK requires Android 8.0 (API 26) or later. The device must also support Shizuku.
+2. Install and start [Shizuku](https://shizuku.rikka.app/) 13 or newer using wireless debugging or USB ADB.
+3. Open Debloater, tap **连接 / 授权** (Connect / authorize), and grant Shizuku access. Builds with the old package ID can coexist with this version, which needs its own authorization.
+
+### Find and manage apps
+
+Search by display name or package ID. Separate keywords with spaces to match all terms. Filter by installed, system, user, disabled, or uninstalled for the current user. More results load automatically as you scroll. Search covers the entire selected category, and available app icons load as rows are displayed.
+
+| Menu | What it does |
+| --- | --- |
+| App details and installation path | Inspect package-manager output. You can also enter a known package ID from **工具** (Tools). |
+| 权限与通知 (Permissions and notifications) | Open the app's system info page to manage permissions, or open its notification settings directly. |
+| Background restrictions | Check, apply, or reset the background restriction. Debloater reads back the `RUN_ANY_IN_BACKGROUND` setting after changes. |
+| Freeze / unfreeze | Suspend or unsuspend the app for the current user. Suspension restricts opening the app and showing notifications. Background services may still run. |
+| 更多操作 (More actions) | Force-stop, disable, enable, uninstall for the current user, or try restoring an existing package. Force-stop ends the current execution. The app can still be launched again. |
+| 工具 → ADB Shell 终端 (Tools → ADB Shell terminal) | Run commands through Shizuku in ADB mode, view output and exit codes, and reuse command history. Each command runs in a separate shell. |
+
+Check the package ID and Android user before applying a change. Restore works when Android still has the package. Device policy or vendor protections may reject operations. Check the returned state even when the exit code is `0`. When uninstall returns `DELETE_FAILED_INTERNAL_ERROR`, the result includes the raw output and diagnostic hints.
+
+## 构建 / Build
+
+使用 / Use JDK 17 or 21, Gradle 9.3.1, Android SDK 37.0, and Build Tools 36.0.0.
+
+```sh
+gradle assembleDebug lintDebug
+```
+
+APK 输出 / APK output: `app/build/outputs/apk/debug/app-debug.apk`.

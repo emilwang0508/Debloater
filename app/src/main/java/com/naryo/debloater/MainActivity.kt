@@ -35,6 +35,10 @@ import android.view.inputmethod.EditorInfo
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.util.LruCache
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -43,6 +47,13 @@ import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
     private val worker = Executors.newSingleThreadExecutor()
+    private val iconWorker = Executors.newSingleThreadExecutor()
+    private val icons = LruCache<String, Bitmap>(64)
+    private val loadingIcons = mutableSetOf<String>()
+    private val missingIcons = mutableSetOf<String>()
+    private lateinit var moreApps: Button
+    private var matches = emptyList<AppRow>()
+    private val pageSize = 30
     private lateinit var status: TextView
     private data class AppRow(val name: String, val title: String, val kind: String, val state: String)
     private lateinit var results: ListView
@@ -161,6 +172,11 @@ class MainActivity : Activity() {
         summary = label("连接 Shizuku 后加载应用", 14f)
         summary.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         root.addView(summary)
+        moreApps = Button(this).apply {
+            isAllCaps = false
+            visibility = View.GONE
+            setOnClickListener { showAppPage(appAdapter.count + pageSize) }
+        }
         results = ListView(this).apply {
             adapter = appAdapter
             setOnItemClickListener { _, _, index, _ ->
@@ -169,6 +185,7 @@ class MainActivity : Activity() {
             }
         }
         root.addView(results, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        root.addView(moreApps)
         query.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = renderInventory()
@@ -368,29 +385,75 @@ class MainActivity : Activity() {
         override fun getItem(position: Int) = rows[position]
         override fun getItemId(position: Int) = position.toLong()
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-            val cell = convertView as? LinearLayout ?: column().apply {
+            val cell = convertView as? LinearLayout ?: LinearLayout(this@MainActivity).apply {
+                gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(12), dp(9), dp(12), dp(9))
                 minimumHeight = dp(64)
-                addView(label("", 16f, bold = true))
-                addView(label("", 13f))
+                addView(ImageView(this@MainActivity).apply {
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(12) })
+                addView(column().apply {
+                    addView(label("", 16f, bold = true))
+                    addView(label("", 13f))
+                }, LinearLayout.LayoutParams(0, -2, 1f))
             }
             val row = getItem(position)
-            (cell.getChildAt(0) as TextView).text = row.title.ifBlank { row.name }
+            bindAppIcon(cell.getChildAt(0) as ImageView, row.name)
+            val text = cell.getChildAt(1) as LinearLayout
+            (text.getChildAt(0) as TextView).text = row.title.ifBlank { row.name }
             val kind = if (row.kind == "system") "系统应用" else "用户应用"
             val state = when (row.state) {
                 "removed" -> "当前用户未安装"
                 "disabled" -> "已停用"
                 else -> "已启用"
             }
-            (cell.getChildAt(1) as TextView).text =
+            (text.getChildAt(1) as TextView).text =
                 if (row.title.isBlank()) "$kind · $state" else "${row.name}\n$kind · $state"
             return cell
+        }
+    }
+
+    private fun bindAppIcon(view: ImageView, name: String) {
+        view.tag = name
+        val cached = icons.get(name)
+        if (cached != null) {
+            view.setImageBitmap(cached)
+            return
+        }
+        view.setImageResource(android.R.drawable.sym_def_app_icon)
+        if (name in missingIcons || !loadingIcons.add(name)) return
+        val size = dp(40)
+        iconWorker.execute {
+            val bitmap = runCatching {
+                val drawable = packageManager.getApplicationIcon(name)
+                Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).also {
+                    drawable.setBounds(0, 0, size, size)
+                    drawable.draw(Canvas(it))
+                }
+            }.getOrNull()
+            runOnUiThread {
+                loadingIcons.remove(name)
+                if (isDestroyed || isFinishing) return@runOnUiThread
+                if (bitmap == null) {
+                    missingIcons.add(name)
+                    return@runOnUiThread
+                }
+                icons.put(name, bitmap)
+                for (index in 0 until results.childCount) {
+                    val row = results.getChildAt(index) as? LinearLayout
+                    val icon = row?.getChildAt(0) as? ImageView
+                    if (icon?.tag == name) icon.setImageBitmap(bitmap)
+                }
+            }
         }
     }
 
     private fun invalidateInventory() {
         inventory = null
         loadingInventory = false
+        matches = emptyList()
+        moreApps.visibility = View.GONE
         appAdapter.rows = emptyList()
         appAdapter.notifyDataSetChanged()
         summary.text = "连接 Shizuku 后加载应用"
@@ -400,6 +463,7 @@ class MainActivity : Activity() {
         if (loadingInventory) return
         val connection = service
         loadingInventory = true
+        missingIcons.clear()
         summary.text = "正在读取应用列表…"
         run("inventory", failed = {
             if (service === connection) {
@@ -443,7 +507,7 @@ class MainActivity : Activity() {
         val apps = inventory ?: return
         val term = query.text.toString().trim()
         val words = term.split(Regex("\\s+")).filter { it.isNotEmpty() }
-        appAdapter.rows = apps.filter { row ->
+        matches = apps.filter { row ->
             val inScope = when (scope.selectedItemPosition) {
                 1 -> row.kind == "system" && row.state != "removed"
                 2 -> row.kind == "user" && row.state != "removed"
@@ -453,10 +517,22 @@ class MainActivity : Activity() {
             }
             inScope && words.all { row.title.contains(it, true) || row.name.contains(it, true) }
         }
-        appAdapter.notifyDataSetChanged()
+        showAppPage(pageSize)
         results.setSelection(0)
-        summary.text = if (appAdapter.count == 0) "没有匹配的应用"
-            else "${appAdapter.count} 个应用 · 用户 $inventoryUser"
+    }
+
+    private fun showAppPage(limit: Int) {
+        appAdapter.rows = matches.take(limit)
+        appAdapter.notifyDataSetChanged()
+        val shown = appAdapter.count
+        val remaining = matches.size - shown
+        moreApps.visibility = if (remaining > 0) View.VISIBLE else View.GONE
+        moreApps.text = "加载更多（还有 $remaining 个）"
+        summary.text = when {
+            shown == 0 -> "没有匹配的应用"
+            remaining > 0 -> "已显示 $shown / ${matches.size} 个应用 · 用户 $inventoryUser"
+            else -> "$shown 个应用 · 用户 $inventoryUser"
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -633,6 +709,7 @@ class MainActivity : Activity() {
         Shizuku.removeBinderDeadListener(dead)
         Shizuku.removeRequestPermissionResultListener(permission)
         if (service != null || binding) runCatching { Shizuku.unbindUserService(args, connection, true) }
+        iconWorker.shutdownNow()
         worker.shutdown()
         super.onDestroy()
     }

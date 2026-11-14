@@ -105,7 +105,6 @@ class MainActivity : Activity() {
         val root = column().apply {
             setBackgroundColor(adaptive(0xFFF2F6F3.toInt(), 0xFF121B17.toInt()))
         }
-        fitSystemAreas(window, root, horizontal = 20, vertical = 12)
         root.addView(label("应用管理", 32f, bold = true))
         status = label("", 14f)
         val connectionCard = card(root)
@@ -172,6 +171,7 @@ class MainActivity : Activity() {
         root.isFocusableInTouchMode = true
         root.requestFocus()
         setContentView(root)
+        fitSystemAreas(window, root, horizontal = 20, vertical = 12)
 
         Shizuku.addBinderDeadListener(dead)
         Shizuku.addRequestPermissionResultListener(permission)
@@ -458,8 +458,8 @@ class MainActivity : Activity() {
         window.navigationBarColor = Color.TRANSPARENT
         val appearance = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
             WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-        window.insetsController?.setSystemBarsAppearance(if (nightMode) 0 else appearance, appearance)
         root.setOnApplyWindowInsetsListener { view, insets ->
+            view.windowInsetsController?.setSystemBarsAppearance(if (nightMode) 0 else appearance, appearance)
             val safe = insets.getInsets(WindowInsets.Type.systemBars() or
                 WindowInsets.Type.displayCutout() or WindowInsets.Type.mandatorySystemGestures() or
                 WindowInsets.Type.ime())

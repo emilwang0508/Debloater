@@ -68,19 +68,19 @@ class MainActivity : Activity() {
         service = null
         invalidateInventory()
         binding = false
-        status.text = "Shizuku 服务已断开"
+        status.text = "Shizuku · 已断开"
     }
     private val permission = Shizuku.OnRequestPermissionResultListener { request, grant ->
         if (request == 1001) {
             if (grant == PackageManager.PERMISSION_GRANTED) connect()
-            else status.text = "Shizuku 授权被拒绝，可在 Shizuku 的授权管理中修改"
+            else connectionHelp("未授权", "可在 Shizuku 的授权管理中允许 Debloater。", true)
         }
     }
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             service = IPackageService.Stub.asInterface(binder)
             binding = false
-            status.text = "Shizuku 已连接"
+            status.text = "Shizuku · 已连接"
             loadInventory()
         }
 
@@ -88,7 +88,7 @@ class MainActivity : Activity() {
             service = null
             invalidateInventory()
             binding = false
-            status.text = "包管理服务已断开，请重新连接"
+            status.text = "Shizuku · 已断开"
         }
     }
 
@@ -106,11 +106,27 @@ class MainActivity : Activity() {
             setBackgroundColor(adaptive(0xFFF2F6F3.toInt(), 0xFF121B17.toInt()))
         }
         root.addView(label("应用管理", 32f, bold = true))
-        status = label("", 14f)
-        val connectionCard = card(root)
-        connectionCard.addView(label("Shizuku 连接", 18f, bold = true))
-        connectionCard.addView(status)
-        connectionCard.addView(action("连接 / 授权") { connect(requestPermission = true) })
+        status = label("", 14f).apply {
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        val connectionRow = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = surface(adaptive(Color.WHITE, 0xFF1D2A24.toInt()))
+            setPadding(dp(12), 0, dp(4), 0)
+        }
+        root.addView(connectionRow, LinearLayout.LayoutParams(MATCH_PARENT, -2).apply {
+            topMargin = dp(8)
+        })
+        connectionRow.addView(status, LinearLayout.LayoutParams(0, -2, 1f))
+        connectionRow.addView(Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+            text = "连接 / 授权"
+            isAllCaps = false
+            minimumHeight = dp(48)
+            setTextColor(adaptive(0xFF175C47.toInt(), 0xFFA5DDBF.toInt()))
+            setOnClickListener { connect(requestPermission = true) }
+        })
 
         query = EditText(this).apply {
             hint = "搜索应用名称或包名"
@@ -186,28 +202,33 @@ class MainActivity : Activity() {
             .show()
     }
 
+    private fun connectionHelp(state: String, message: String, showHelp: Boolean) {
+        status.text = "Shizuku · $state"
+        if (showHelp) showResult("Shizuku", message)
+    }
+
     private fun connect(requestPermission: Boolean = false) {
         try {
             when {
-                !Shizuku.pingBinder() -> status.text = "请先通过无线调试或 USB ADB 启动 Shizuku"
-                Shizuku.isPreV11() || Shizuku.getVersion() < 13 -> status.text = "请更新到 Shizuku 13 或更高版本"
+                !Shizuku.pingBinder() -> connectionHelp("未启动", "请先通过无线调试或 USB ADB 启动 Shizuku。", requestPermission)
+                Shizuku.isPreV11() || Shizuku.getVersion() < 13 -> connectionHelp("需更新", "请更新到 Shizuku 13 或更高版本。", requestPermission)
                 Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED -> {
-                    status.text = "等待 Shizuku 授权"
+                    status.text = "Shizuku · 待授权"
                     if (requestPermission) {
                         if (Shizuku.shouldShowRequestPermissionRationale()) {
-                            status.text = "请在 Shizuku 的授权管理中允许本应用"
+                            connectionHelp("未授权", "请在 Shizuku 的授权管理中允许本应用。", true)
                         } else Shizuku.requestPermission(1001)
                     }
                 }
                 service == null && (!binding || requestPermission) -> {
                     binding = true
-                    status.text = "正在连接包管理服务…"
+                    status.text = "Shizuku · 连接中…"
                     Shizuku.bindUserService(args, connection)
                 }
             }
         } catch (error: Exception) {
             binding = false
-            status.text = "连接失败：${error.message}"
+            connectionHelp("连接失败", error.message ?: "请重新连接 Shizuku。", requestPermission)
         }
     }
 
@@ -225,14 +246,6 @@ class MainActivity : Activity() {
     private fun surface(color: Int) = GradientDrawable().apply {
         setColor(color)
         cornerRadius = dp(18).toFloat()
-    }
-
-    private fun card(parent: LinearLayout) = column().apply {
-        background = surface(adaptive(Color.WHITE, 0xFF1D2A24.toInt()))
-        setPadding(dp(16), dp(14), dp(16), dp(14))
-        parent.addView(this, LinearLayout.LayoutParams(MATCH_PARENT, -2).apply {
-            topMargin = dp(14)
-        })
     }
 
     private fun action(value: String, primary: Boolean = false, onClick: () -> Unit) =

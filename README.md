@@ -13,6 +13,7 @@ Debloater 是一款通过 Shizuku 管理 Android 应用的免 Root 工具。应�
 3. 打开 Debloater，点「连接 / 授权」，允许 Shizuku 授权。旧版包名不同，可与本版并存，本版需要单独授权。
 
 ### 查找与管理应用
+从左上角打开侧边栏，点「语言」可选择跟随系统、简体中文或 English。跟随系统时，中文系统显示简体中文，其他系统语言显示英文。列表优先读取本地缓存，搜索只筛选缓存。点「刷新」或完成卸载、恢复、停用等操作后会重新读取。
 
 输入应用名称或包名即可即时搜索。多个关键词用空格分隔，所有词都匹配时才显示。列表可筛选「已安装」「系统应用」「用户应用」「已停用」「已卸载」。滚动接近末尾时自动加载下一批，搜索覆盖当前分类的完整清单。可用的应用图标会随列表行加载。
 
@@ -38,6 +39,7 @@ Debloater is a rootless Android app-management tool powered by Shizuku. Its pack
 3. Open Debloater, tap **连接 / 授权** (Connect / authorize), and grant Shizuku access. Builds with the old package ID can coexist with this version, which needs its own authorization.
 
 ### Find and manage apps
+Open the top-left menu and select Language to choose Follow system, Simplified Chinese, or English. Follow system uses Simplified Chinese for Chinese system locales and English otherwise. Search filters the cached list. Refresh or a package state change reloads the list.
 
 Search by display name or package ID. Separate keywords with spaces to match all terms. Filter by installed, system, user, disabled, or uninstalled for the current user. More results load automatically as you scroll. Search covers the entire selected category, and available app icons load as rows are displayed.
 

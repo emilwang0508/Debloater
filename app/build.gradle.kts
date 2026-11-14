@@ -10,8 +10,8 @@ android {
         applicationId = "com.naryo.debloater"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.9.0"
+        versionCode = 15
+        versionName = "0.9.1-preview.1"
     }
 
     buildFeatures {

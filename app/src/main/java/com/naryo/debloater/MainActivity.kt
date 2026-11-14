@@ -9,6 +9,12 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
+import android.content.Context
+import android.widget.FrameLayout
+import android.widget.ImageButton
+import java.util.Locale
+import org.json.JSONArray
+import org.json.JSONObject
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -65,9 +71,10 @@ class MainActivity : Activity() {
     private lateinit var scope: Spinner
     private lateinit var summary: TextView
     private var inventory: List<AppRow>? = null
-    private var inventoryUser = -1
+    private var pendingRefresh = false
+    private var inventoryUser: Int? = null
     private var loadingInventory = false
-    private val scopes = listOf("已安装", "系统应用", "用户应用", "已停用", "已卸载")
+    private val scopes get() = listOf(getString(R.string.installed), getString(R.string.system_apps), getString(R.string.user_apps), getString(R.string.disabled), getString(R.string.uninstalled))
     private var service: IPackageService? = null
     private var binding = false
     private var shellTranscript = ""
@@ -76,34 +83,42 @@ class MainActivity : Activity() {
     private var terminalRefresh: (() -> Unit)? = null
     private val args by lazy {
         Shizuku.UserServiceArgs(ComponentName(this, PackageService::class.java))
-            .processNameSuffix("package_service").daemon(false).version(7)
+            .processNameSuffix("package_service").daemon(false).version(8)
     }
     private val received = Shizuku.OnBinderReceivedListener { connect() }
     private val dead = Shizuku.OnBinderDeadListener {
         service = null
         invalidateInventory()
         binding = false
-        status.text = "Shizuku · 已断开"
+        status.text = getString(R.string.disconnected)
     }
     private val permission = Shizuku.OnRequestPermissionResultListener { request, grant ->
         if (request == 1001) {
             if (grant == PackageManager.PERMISSION_GRANTED) connect()
-            else connectionHelp("未授权", "可在 Shizuku 的授权管理中允许 Debloater。", true)
+            else connectionHelp(getString(R.string.unauthorized), getString(R.string.authorization_denied), true)
         }
     }
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             service = IPackageService.Stub.asInterface(binder)
             binding = false
-            status.text = "Shizuku · 已连接"
-            loadInventory()
+            status.text = getString(R.string.connected)
+            run("user") { info ->
+                if (inventoryUser != info.getInt("user", -1)) {
+                    inventory = null
+                    matches = emptyList()
+                    appAdapter.rows = emptyList()
+                    appAdapter.notifyDataSetChanged()
+                    loadInventory()
+                }
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
             service = null
             invalidateInventory()
             binding = false
-            status.text = "Shizuku · 已断开"
+            status.text = getString(R.string.disconnected)
         }
     }
 
@@ -113,6 +128,19 @@ class MainActivity : Activity() {
 
     private fun adaptive(light: Int, dark: Int): Int = if (nightMode) dark else light
 
+    override fun attachBaseContext(base: Context) {
+        val preference = base.getSharedPreferences("settings", MODE_PRIVATE)
+        val systemLanguage = base.resources.configuration.locales[0].language
+        val selected = preference.getString("language", "system")
+        val locale = when (selected) {
+            "zh" -> Locale.SIMPLIFIED_CHINESE
+            "en" -> Locale.ENGLISH
+            else -> if (systemLanguage == "zh") Locale.SIMPLIFIED_CHINESE else Locale.ENGLISH
+        }
+        val config = Configuration(base.resources.configuration).apply { setLocale(locale) }
+        super.attachBaseContext(base.createConfigurationContext(config))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         setTheme(if (nightMode) android.R.style.Theme_Material_NoActionBar
             else android.R.style.Theme_Material_Light_NoActionBar)
@@ -120,7 +148,19 @@ class MainActivity : Activity() {
         val root = column().apply {
             setBackgroundColor(adaptive(0xFFF2F6F3.toInt(), 0xFF121B17.toInt()))
         }
-        root.addView(label("应用管理", 32f, bold = true))
+        val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        header.addView(ImageButton(this, null, android.R.attr.borderlessButtonStyle).apply {
+            setImageResource(R.drawable.ic_menu)
+            setColorFilter(adaptive(0xFF173229.toInt(), 0xFFE3F2E9.toInt()))
+            contentDescription = getString(R.string.open_menu)
+            setOnClickListener { openDrawer() }
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        header.addView(label(getString(R.string.app_management), 26f, bold = true), LinearLayout.LayoutParams(-2, -2))
+        header.addView(ImageView(this).apply {
+            setImageResource(R.mipmap.ic_launcher)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginStart = dp(10) })
+        root.addView(header)
         status = label("", 14f).apply {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -136,7 +176,7 @@ class MainActivity : Activity() {
         })
         connectionRow.addView(status, LinearLayout.LayoutParams(0, -2, 1f))
         connectionRow.addView(Button(this, null, android.R.attr.borderlessButtonStyle).apply {
-            text = "连接 / 授权"
+            text = getString(R.string.connect)
             isAllCaps = false
             minimumHeight = dp(48)
             setTextColor(adaptive(0xFF175C47.toInt(), 0xFFA5DDBF.toInt()))
@@ -144,7 +184,7 @@ class MainActivity : Activity() {
         })
 
         query = EditText(this).apply {
-            hint = "搜索应用名称或包名"
+            hint = getString(R.string.search_hint)
             isSingleLine = true
             imeOptions = EditorInfo.IME_ACTION_SEARCH
             setText(savedInstanceState?.getString("searchQuery").orEmpty())
@@ -153,7 +193,7 @@ class MainActivity : Activity() {
         scope = Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, scopes)
             minimumHeight = dp(48)
-            contentDescription = "应用分类"
+            contentDescription = getString(R.string.app_filter)
             setSelection(savedInstanceState?.getInt("scope")?.coerceIn(scopes.indices) ?: 0)
         }
         val controls = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
@@ -165,17 +205,16 @@ class MainActivity : Activity() {
                 setOnClickListener { press() }
             })
         }
-        control("刷新") { loadInventory() }
-        control("工具") {
-            showMenu("进阶工具", listOf(
-                "输入完整包名" to { openManualPackage() },
-                "ADB Shell 终端" to { showShell() }
+        control(getString(R.string.refresh)) { loadInventory() }
+        control(getString(R.string.tools)) {
+            showMenu(getString(R.string.advanced_tools), listOf(
+                getString(R.string.enter_package) to { openManualPackage() },
+                getString(R.string.shell_terminal) to { showShell() }
             ))
         }
         root.addView(controls)
-        summary = label("连接 Shizuku 后加载应用", 14f)
+        summary = label(getString(R.string.connect_to_load), 14f)
         summary.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-        root.addView(summary)
         results = ListView(this).apply {
             adapter = appAdapter
             setOnScrollListener(object : AbsListView.OnScrollListener {
@@ -201,7 +240,12 @@ class MainActivity : Activity() {
                 openPackage(row.name, row.title, row.state)
             }
         }
-        root.addView(results, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        val listArea = FrameLayout(this)
+        listArea.addView(results, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        listArea.addView(summary, FrameLayout.LayoutParams(MATCH_PARENT, -2, Gravity.CENTER))
+        summary.gravity = Gravity.CENTER
+        results.emptyView = summary
+        root.addView(listArea, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         query.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = renderInventory()
@@ -209,6 +253,7 @@ class MainActivity : Activity() {
         })
         query.setOnEditorActionListener { _, id, _ ->
             if (id == EditorInfo.IME_ACTION_SEARCH) {
+                if (inventory == null && service != null) loadInventory()
                 getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(query.windowToken, 0)
                 true
             } else false
@@ -222,16 +267,71 @@ class MainActivity : Activity() {
         setContentView(root)
         fitSystemAreas(window, root, horizontal = 20, vertical = 12)
 
-        Shizuku.addBinderDeadListener(dead)
-        Shizuku.addRequestPermissionResultListener(permission)
-        Shizuku.addBinderReceivedListenerSticky(received)
-        connect()
+        restoreInventory {
+            Shizuku.addBinderDeadListener(dead)
+            Shizuku.addRequestPermissionResultListener(permission)
+            Shizuku.addBinderReceivedListenerSticky(received)
+            connect()
+        }
+    }
+
+    private fun openDrawer() {
+        getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(query.windowToken, 0)
+        val dialog = Dialog(this, if (nightMode) android.R.style.Theme_Material_NoActionBar
+            else android.R.style.Theme_Material_Light_NoActionBar)
+        val overlay = FrameLayout(this)
+        val scrim = View(this).apply {
+            setBackgroundColor(0x88000000.toInt())
+            contentDescription = getString(R.string.close_menu)
+            setOnClickListener { dialog.dismiss() }
+        }
+        overlay.addView(scrim, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        val panel = column().apply {
+            setBackgroundColor(adaptive(0xFFF9FCFA.toInt(), 0xFF1D2A24.toInt()))
+            setPadding(dp(20), dp(12), dp(20), dp(12))
+            isClickable = true
+        }
+        val width = minOf(dp(336), (resources.displayMetrics.widthPixels * 0.82f).toInt())
+        overlay.addView(ScrollView(this).apply {
+            isFillViewport = true
+            addView(panel)
+        }, FrameLayout.LayoutParams(width, MATCH_PARENT, Gravity.LEFT))
+        val brand = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        brand.addView(ImageView(this).apply { setImageResource(R.mipmap.ic_launcher) },
+            LinearLayout.LayoutParams(dp(40), dp(40)))
+        brand.addView(label("Debloater", 24f, bold = true))
+        panel.addView(brand)
+        val preferences = getSharedPreferences("settings", MODE_PRIVATE)
+        val keys = listOf("system", "zh", "en")
+        val names = arrayOf(getString(R.string.follow_system), "简体中文", "English")
+        val selected = keys.indexOf(preferences.getString("language", "system")).coerceAtLeast(0)
+        panel.addView(action(getString(R.string.language_value, names[selected])) {
+            dialog.dismiss()
+            AlertDialog.Builder(this).setTitle(R.string.language)
+                .setSingleChoiceItems(names, selected) { picker, index ->
+                    picker.dismiss()
+                    if (index != selected) {
+                        preferences.edit().putString("language", keys[index]).apply()
+                        recreate()
+                    }
+                }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
+        })
+        dialog.setContentView(overlay)
+        dialog.show()
+        dialog.window?.let {
+            it.setLayout(MATCH_PARENT, MATCH_PARENT)
+            fitSystemAreas(it, overlay, horizontal = 0, vertical = 0)
+        }
+        panel.translationX = -width.toFloat()
+        panel.animate().translationX(0f).setDuration(180).start()
     }
 
     private fun showMenu(title: String, items: List<Pair<String, () -> Unit>>) {
         AlertDialog.Builder(this).setTitle(title)
             .setItems(items.map { it.first }.toTypedArray()) { _, index -> items[index].second() }
-            .setNegativeButton("关闭", null)
+            .setNegativeButton(getString(R.string.close), null)
             .show()
     }
 
@@ -243,25 +343,25 @@ class MainActivity : Activity() {
     private fun connect(requestPermission: Boolean = false) {
         try {
             when {
-                !Shizuku.pingBinder() -> connectionHelp("未启动", "请先通过无线调试或 USB ADB 启动 Shizuku。", requestPermission)
-                Shizuku.isPreV11() || Shizuku.getVersion() < 13 -> connectionHelp("需更新", "请更新到 Shizuku 13 或更高版本。", requestPermission)
+                !Shizuku.pingBinder() -> connectionHelp(getString(R.string.not_running), getString(R.string.start_shizuku), requestPermission)
+                Shizuku.isPreV11() || Shizuku.getVersion() < 13 -> connectionHelp(getString(R.string.update_required), getString(R.string.update_shizuku), requestPermission)
                 Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED -> {
-                    status.text = "Shizuku · 待授权"
+                    status.text = getString(R.string.awaiting_authorization)
                     if (requestPermission) {
                         if (Shizuku.shouldShowRequestPermissionRationale()) {
-                            connectionHelp("未授权", "请在 Shizuku 的授权管理中允许本应用。", true)
+                            connectionHelp(getString(R.string.unauthorized), getString(R.string.allow_in_shizuku), true)
                         } else Shizuku.requestPermission(1001)
                     }
                 }
                 service == null && (!binding || requestPermission) -> {
                     binding = true
-                    status.text = "Shizuku · 连接中…"
+                    status.text = getString(R.string.connecting)
                     Shizuku.bindUserService(args, connection)
                 }
             }
         } catch (error: Exception) {
             binding = false
-            connectionHelp("连接失败", error.message ?: "请重新连接 Shizuku。", requestPermission)
+            connectionHelp(getString(R.string.connection_failed), error.message ?: getString(R.string.reconnect), requestPermission)
         }
     }
 
@@ -299,16 +399,16 @@ class MainActivity : Activity() {
 
     private fun openManualPackage() {
         val input = EditText(this).apply {
-            hint = "例如 com.oplus.olc"
+            hint = getString(R.string.package_example)
             isSingleLine = true
         }
-        val dialog = AlertDialog.Builder(this).setTitle("输入完整包名")
-            .setView(input).setNegativeButton("取消", null).setPositiveButton("继续", null).create()
+        val dialog = AlertDialog.Builder(this).setTitle(getString(R.string.enter_package))
+            .setView(input).setNegativeButton(getString(R.string.cancel), null).setPositiveButton(getString(R.string.continue_action), null).create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val name = input.text.toString().trim()
                 if (!packageNamePattern.matches(name)) {
-                    input.error = "请输入有效的完整包名"
+                    input.error = getString(R.string.invalid_package_hint)
                     return@setOnClickListener
                 }
                 dialog.dismiss()
@@ -321,29 +421,29 @@ class MainActivity : Activity() {
     private fun openPackage(name: String, title: String, state: String? = null) {
         if (state == "removed") {
             showMenu(name, listOf(
-                "恢复当前用户安装" to { change(name, "restore", "恢复安装") },
-                "查看应用详情" to { run("details", name, done = ::display) }
+                getString(R.string.restore_for_user) to { change(name, "restore", getString(R.string.restore)) },
+                getString(R.string.app_details) to { run("details", name, done = ::display) }
             ))
             return
         }
         val actions = mutableListOf<Pair<String, () -> Unit>>(
-            "查看应用详情" to { run("details", name, done = ::display) },
-            "权限与通知" to { showPermissionSettings(name) },
-            "查询后台限制" to { run("background-status", name, done = ::display) }
+            getString(R.string.app_details) to { run("details", name, done = ::display) },
+            getString(R.string.permissions_notifications) to { showPermissionSettings(name) },
+            getString(R.string.background_status) to { run("background-status", name, done = ::display) }
         )
         if (name != packageName) {
-            actions += "限制后台运行" to { change(name, "background-restrict", "限制后台运行") }
-            actions += "恢复后台默认设置" to { change(name, "background-reset", "恢复后台默认设置") }
-            actions += "冻结应用" to { change(name, "freeze", "冻结应用") }
-            actions += "解除冻结" to { change(name, "unfreeze", "解除冻结") }
-            actions += "更多操作" to {
+            actions += getString(R.string.restrict_background) to { change(name, "background-restrict", getString(R.string.restrict_background)) }
+            actions += getString(R.string.reset_background) to { change(name, "background-reset", getString(R.string.reset_background)) }
+            actions += getString(R.string.freeze) to { change(name, "freeze", getString(R.string.freeze)) }
+            actions += getString(R.string.unfreeze) to { change(name, "unfreeze", getString(R.string.unfreeze)) }
+            actions += getString(R.string.more_actions) to {
                 showMenu(name, listOf(
-                    "强行停止" to { change(name, "force-stop", "强行停止") },
-                    "停用应用" to { change(name, "disable", "停用应用") },
-                    "重新启用" to { change(name, "enable", "重新启用") },
-                    "为当前用户卸载" to { change(name, "uninstall", "卸载应用") },
-                    "恢复当前用户安装" to { change(name, "restore", "恢复安装") },
-                    "查看安装路径" to { run("path", name, done = ::display) }
+                    getString(R.string.force_stop) to { change(name, "force-stop", getString(R.string.force_stop)) },
+                    getString(R.string.disable) to { change(name, "disable", getString(R.string.disable)) },
+                    getString(R.string.enable) to { change(name, "enable", getString(R.string.enable)) },
+                    getString(R.string.uninstall_for_user) to { change(name, "uninstall", getString(R.string.uninstall)) },
+                    getString(R.string.restore_for_user) to { change(name, "restore", getString(R.string.restore)) },
+                    getString(R.string.installation_path) to { run("path", name, done = ::display) }
                 ))
             }
         }
@@ -354,9 +454,9 @@ class MainActivity : Activity() {
         val appInfo = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", name, null))
         val notifications = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
             .putExtra(Settings.EXTRA_APP_PACKAGE, name)
-        showMenu("权限与通知", listOf(
-            "应用权限（系统设置）" to { launchSettings(appInfo) },
-            "应用通知（系统设置）" to { launchSettings(notifications, appInfo) }
+        showMenu(getString(R.string.permissions_notifications), listOf(
+            getString(R.string.permission_settings) to { launchSettings(appInfo) },
+            getString(R.string.notification_settings) to { launchSettings(notifications, appInfo) }
         ))
     }
 
@@ -365,28 +465,33 @@ class MainActivity : Activity() {
             startActivity(intent)
         } catch (_: ActivityNotFoundException) {
             if (fallback != null) launchSettings(fallback)
-            else showResult("无法打开设置", "请在系统设置的应用管理中查找该应用。")
+            else showResult(getString(R.string.settings_unavailable), getString(R.string.find_in_settings))
         }
     }
 
     private fun showResult(title: String, message: String) {
         AlertDialog.Builder(this).setTitle(title).setMessage(message)
-            .setPositiveButton("关闭", null).show()
+            .setPositiveButton(getString(R.string.close), null).show()
             .findViewById<TextView>(android.R.id.message)?.setTextIsSelectable(true)
     }
 
     private fun change(name: String, operation: String, label: String) {
         run("user") { info ->
             val user = info.getInt("user", -1)
+            if (inventoryUser != null && inventoryUser != user) {
+                loadInventory()
+                showResult(getString(R.string.operation_incomplete), getString(R.string.user_changed))
+                return@run
+            }
             val effect = when (operation) {
-                "freeze" -> "挂起后，应用界面和通知会受限，后台服务仍可能运行。"
-                "force-stop" -> "将结束应用当前运行，未保存的内容可能丢失。"
-                else -> "系统组件的状态变更可能影响相关功能。"
+                "freeze" -> getString(R.string.freeze_effect)
+                "force-stop" -> getString(R.string.force_stop_effect)
+                else -> getString(R.string.component_effect)
             }
             AlertDialog.Builder(this)
-                .setTitle("确认${label}")
-                .setMessage("目标：$name\n当前 Android 用户：$user\n$effect")
-                .setNegativeButton("取消", null)
+                .setTitle(getString(R.string.confirm_action, label))
+                .setMessage(getString(R.string.action_target, name, user, effect))
+                .setNegativeButton(getString(R.string.cancel), null)
                 .setPositiveButton(label) { _, _ -> run(operation, name, user) { result ->
                     display(result)
                     if (operation in setOf("disable", "enable", "uninstall", "restore")) loadInventory()
@@ -399,20 +504,20 @@ class MainActivity : Activity() {
         operation: String,
         name: String = "",
         user: Int = -1,
-        failed: (String) -> Unit = { showResult("操作未完成", it) },
+        failed: (String) -> Unit = { showResult(getString(R.string.operation_incomplete), it) },
         done: (Bundle) -> Unit
     ) {
         val remote = service
         if (remote == null) {
-            failed("请先连接或授权 Shizuku，连接完成后再重试")
+            failed(getString(R.string.connect_to_retry))
             connect()
             return
         }
         worker.execute {
-            val result = runCatching { remote.execute(operation, name, user) }
+            val result = runCatching { remote.execute(operation, name, user, resources.configuration.locales[0].language) }
             runOnUiThread {
                 if (!isDestroyed && !isFinishing) result.fold(done) {
-                    failed("执行失败：${it.message ?: it.javaClass.simpleName}")
+                    failed(getString(R.string.execution_failed, it.message ?: it.javaClass.simpleName))
                 }
             }
         }
@@ -441,11 +546,11 @@ class MainActivity : Activity() {
             bindAppIcon(cell.getChildAt(0) as ImageView, row.name)
             val text = cell.getChildAt(1) as LinearLayout
             (text.getChildAt(0) as TextView).text = row.title.ifBlank { row.name }
-            val kind = if (row.kind == "system") "系统应用" else "用户应用"
+            val kind = if (row.kind == "system") getString(R.string.system_apps) else getString(R.string.user_apps)
             val state = when (row.state) {
-                "removed" -> "当前用户未安装"
-                "disabled" -> "已停用"
-                else -> "已启用"
+                "removed" -> getString(R.string.not_installed_for_user)
+                "disabled" -> getString(R.string.disabled)
+                else -> getString(R.string.enabled)
             }
             (text.getChildAt(1) as TextView).text =
                 if (row.title.isBlank()) "$kind · $state" else "${row.name}\n$kind · $state"
@@ -489,24 +594,67 @@ class MainActivity : Activity() {
     }
 
     private fun invalidateInventory() {
-        inventory = null
         loadingInventory = false
-        matches = emptyList()
-        appAdapter.rows = emptyList()
-        appAdapter.notifyDataSetChanged()
-        summary.text = "连接 Shizuku 后加载应用"
+        pendingRefresh = false
+        summary.text = getString(R.string.connect_to_load)
+    }
+
+    private fun restoreInventory(ready: () -> Unit) {
+        val saved = getSharedPreferences("inventory", MODE_PRIVATE)
+            .getString("rows_${android.os.Process.myUserHandle().hashCode()}_${resources.configuration.locales[0].language}", null)
+        if (saved == null) {
+            ready()
+            return
+        }
+        val generation = inventory
+        worker.execute {
+            val rows = runCatching {
+                val data = JSONArray(saved)
+                List(data.length()) { index ->
+                    val item = data.getJSONObject(index)
+                    AppRow(item.getString("name"), item.getString("title"),
+                        item.getString("kind"), item.getString("state"))
+                }
+            }.getOrNull()
+            runOnUiThread {
+                if (!isDestroyed && inventory === generation && rows != null) {
+                    inventory = rows
+                    inventoryUser = android.os.Process.myUserHandle().hashCode()
+                    renderInventory()
+                }
+                if (!isDestroyed && !isFinishing) ready()
+            }
+        }
+    }
+
+    private fun saveInventory(user: Int, rows: List<AppRow>) {
+        val data = JSONArray()
+        for (row in rows) data.put(JSONObject().put("name", row.name).put("title", row.title)
+            .put("kind", row.kind).put("state", row.state))
+        getSharedPreferences("inventory", MODE_PRIVATE).edit().putString("rows_${user}_${resources.configuration.locales[0].language}", data.toString()).apply()
+    }
+
+    private fun finishInventoryLoad() {
+        loadingInventory = false
+        if (pendingRefresh) {
+            pendingRefresh = false
+            loadInventory()
+        }
     }
 
     private fun loadInventory() {
-        if (loadingInventory) return
+        if (loadingInventory) {
+            pendingRefresh = true
+            return
+        }
         val connection = service
         loadingInventory = true
         missingIcons.clear()
-        summary.text = "正在读取应用列表…"
+        summary.text = getString(R.string.loading_apps)
         run("inventory", failed = {
             if (service === connection) {
-                loadingInventory = false
                 summary.text = it
+                finishInventoryLoad()
             }
         }) { data ->
             if (service !== connection) return@run
@@ -529,12 +677,13 @@ class MainActivity : Activity() {
                 }.sortedWith(compareBy<AppRow, String>(String.CASE_INSENSITIVE_ORDER) {
                     it.title.ifBlank { it.name }
                 }.thenBy { it.name })
+                saveInventory(user, parsed)
                 runOnUiThread {
                     if (!isDestroyed && !isFinishing && service === connection) {
-                        loadingInventory = false
                         inventory = parsed
                         inventoryUser = user
                         renderInventory()
+                        finishInventoryLoad()
                     }
                 }
             }
@@ -562,13 +711,7 @@ class MainActivity : Activity() {
     private fun showAppPage(limit: Int) {
         appAdapter.rows = matches.take(limit)
         appAdapter.notifyDataSetChanged()
-        val shown = appAdapter.count
-        val remaining = matches.size - shown
-        summary.text = when {
-            shown == 0 -> "没有匹配的应用"
-            remaining > 0 -> "已显示 $shown / ${matches.size} 个应用 · 用户 $inventoryUser"
-            else -> "$shown 个应用 · 用户 $inventoryUser"
-        }
+        summary.text = getString(R.string.no_matches)
     }
 
     @Suppress("DEPRECATION")
@@ -609,7 +752,7 @@ class MainActivity : Activity() {
         val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         header.addView(label("ADB Shell", 20f, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
         header.addView(Button(this).apply {
-            text = "关闭"
+            text = getString(R.string.close)
             setOnClickListener { dialog.dismiss() }
         })
         layout.addView(header)
@@ -620,7 +763,7 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this).apply { addView(transcript) }
         layout.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         val input = EditText(this).apply {
-            hint = "$ 输入命令"
+            hint = getString(R.string.shell_hint)
             typeface = Typeface.MONOSPACE
             isSingleLine = true
             imeOptions = EditorInfo.IME_ACTION_GO
@@ -628,30 +771,30 @@ class MainActivity : Activity() {
         }
         val row = LinearLayout(this)
         row.addView(input, LinearLayout.LayoutParams(0, -2, 1f))
-        val execute = Button(this).apply { text = "执行" }
+        val execute = Button(this).apply { text = getString(R.string.execute) }
         row.addView(execute)
         val controls = LinearLayout(this)
         var historyIndex = shellHistory.size
         fun control(label: String, action: () -> Unit) {
             controls.addView(Button(this).apply { text = label; setOnClickListener { action() } })
         }
-        control("上一条") {
+        control(getString(R.string.previous)) {
             if (historyIndex > 0) input.setText(shellHistory[--historyIndex])
             input.setSelection(input.length())
         }
-        control("下一条") {
+        control(getString(R.string.next)) {
             if (historyIndex < shellHistory.size) historyIndex++
             input.setText(shellHistory.getOrNull(historyIndex).orEmpty())
             input.setSelection(input.length())
         }
-        control("清屏") {
+        control(getString(R.string.clear)) {
             shellTranscript = ""
             terminalRefresh?.invoke()
         }
         layout.addView(controls)
         layout.addView(row)
         terminalRefresh = {
-            transcript.text = shellTranscript.ifEmpty { "输入 id 查看 Shell 身份。支持管道，单次等待约 20 秒。\n" }
+            transcript.text = shellTranscript.ifEmpty { getString(R.string.shell_intro) }
             execute.isEnabled = !shellBusy
             scroll.post { scroll.scrollTo(0, transcript.height) }
         }
@@ -675,9 +818,9 @@ class MainActivity : Activity() {
                 shellBusy = false
                 val response = result.getString("output").orEmpty()
                 if (response.isNotEmpty()) append(response.take(30_000).trimEnd() + "\n")
-                if (result.getBoolean("truncated") || response.length > 30_000) append("输出已截断\n")
-                if (result.getBoolean("timedOut")) append("执行超时\n")
-                append("[退出码 ${result.getInt("exit")}]\n\n")
+                if (result.getBoolean("truncated") || response.length > 30_000) append(getString(R.string.output_truncated))
+                if (result.getBoolean("timedOut")) append(getString(R.string.execution_timeout))
+                append(getString(R.string.shell_exit, result.getInt("exit")))
             }
         }
         execute.setOnClickListener { submit() }
@@ -700,13 +843,13 @@ class MainActivity : Activity() {
         val response = result.getString("output").orEmpty().trim()
         val hint = when {
             "DELETE_FAILED_INTERNAL_ERROR" in response ->
-                "包管理器返回内部卸载错误。这个错误码无法定位原因。请用包详情核对当前用户的 installed/enabled 状态和系统包标记，再核对设备管理策略及设备厂商的限制。"
+                getString(R.string.uninstall_internal)
             "DELETE_FAILED_DEVICE_POLICY_MANAGER" in response || "DELETE_FAILED_OWNER_BLOCKED" in response ->
-                "请核对设备管理应用或设备所有者设置的卸载限制。"
-            "DELETE_FAILED_USER_RESTRICTED" in response -> "请核对当前 Android 用户的卸载限制。"
+                getString(R.string.uninstall_policy)
+            "DELETE_FAILED_USER_RESTRICTED" in response -> getString(R.string.uninstall_user_restricted)
             "SecurityException" in response || "Permission Denial" in response ->
-                "系统拒绝执行该操作，请核对 Shizuku 的启动方式和设备限制。"
-            result.getInt("exit") == 124 -> "命令超时，请重新检查包状态后再操作。"
+                getString(R.string.permission_denied)
+            result.getInt("exit") == 124 -> getString(R.string.operation_timeout)
             else -> ""
         }
         val backgroundStatus = Regex("(?m)^RUN_ANY_IN_BACKGROUND: ([a-z_]+)")
@@ -714,24 +857,24 @@ class MainActivity : Activity() {
         val summary = when {
             result.getString("verification") != null -> result.getString("verification").orEmpty()
             result.getInt("exit") == 0 && result.getString("command").orEmpty().startsWith("am force-stop ") ->
-                "系统已接受强行停止命令，应用的启用状态不变。"
-            backgroundStatus == "ignore" -> "已限制后台运行"
-            "Default mode: allow" in response -> "使用系统默认规则，允许后台运行"
+                getString(R.string.force_stop_accepted)
+            backgroundStatus == "ignore" -> getString(R.string.background_restricted)
+            "Default mode: allow" in response -> getString(R.string.background_default_allowed)
             else -> ""
         }
         val message = listOf(
             summary,
-            "用户 ${result.getInt("user")} · 退出码 ${result.getInt("exit")}",
+            getString(R.string.user_exit, result.getInt("user"), result.getInt("exit")),
             result.getString("command").orEmpty(),
             hint, response.take(30_000)
         ).filter { it.isNotBlank() }.joinToString("\n\n")
         val command = result.getString("command").orEmpty()
         val title = when {
-            result.getInt("exit") != 0 -> "操作未完成"
+            result.getInt("exit") != 0 -> getString(R.string.operation_incomplete)
             command.startsWith("pm disable-user ") && "new state: disabled-user" !in response ->
-                "未确认应用已停用"
-            result.getString("verification")?.startsWith("未能确认") == true -> "未确认设置生效"
-            else -> "操作结果"
+                getString(R.string.disable_unverified)
+            result.containsKey("verified") && !result.getBoolean("verified") -> getString(R.string.change_unverified)
+            else -> getString(R.string.operation_result)
         }
         showResult(title, message)
     }

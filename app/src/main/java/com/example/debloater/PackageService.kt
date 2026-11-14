@@ -1,4 +1,4 @@
-package com.example.colorosdebloater
+package com.example.debloater
 
 import android.content.Context
 import android.os.Binder

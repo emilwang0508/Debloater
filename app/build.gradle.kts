@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.colorosdebloater"
+    namespace = "com.example.debloater"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.example.colorosdebloater"
+        applicationId = "com.example.debloater"
         minSdk = 26
         targetSdk = 36
         versionCode = 9

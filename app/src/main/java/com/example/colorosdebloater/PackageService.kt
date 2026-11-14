@@ -32,7 +32,30 @@ class PackageService(private val context: Context) : IPackageService.Stub() {
             require(packageNamePattern.matches(packageName)) { "包名无效" }
         }
         val userId = user.toString()
+        val appOp = listOf("cmd", "appops")
         val command = when (operation) {
+            "background-status" -> appOp + listOf("get", "--user", userId, packageName, "RUN_ANY_IN_BACKGROUND")
+            "background-restrict", "background-reset" -> {
+                check(user == expectedUser) { "当前 Android 用户已切换，请重新确认操作。" }
+                val mode = if (operation == "background-restrict") "ignore" else "default"
+                val result = run(*(appOp + listOf("set", "--user", userId, packageName, "RUN_ANY_IN_BACKGROUND", mode)).toTypedArray())
+                val status = run(*(appOp + listOf("get", "--user", userId, packageName, "RUN_ANY_IN_BACKGROUND")).toTypedArray())
+                val state = status.getString("output").orEmpty()
+                val reportedMode = Regex("(?m)^RUN_ANY_IN_BACKGROUND: ([a-z_]+)").find(state)?.groupValues?.get(1)
+                val usesDefault = reportedMode == "default" ||
+                    (reportedMode == null && state.lineSequence().any { it.trim() == "No operations." } &&
+                        state.lineSequence().any { it.trim().startsWith("Default mode:") })
+                return result.apply {
+                    putInt("user", user)
+                    val verified = getInt("exit") == 0 && status.getInt("exit") == 0 &&
+                        (if (mode == "default") usesDefault else reportedMode == mode)
+                    putString("verification", if (verified) "已确认：${if (mode == "default") "使用系统默认规则" else "后台限制已写入"}"
+                        else "未能确认设置生效，请检查回读状态。")
+                    putString("output", listOf(getString("output").orEmpty().trim(),
+                        "状态回读（退出码 ${status.getInt("exit")}）", state.trim())
+                        .filter { it.isNotBlank() }.joinToString("\n"))
+                }
+            }
             "system" -> listOf("pm", "list", "packages", "-s", "--user", userId)
             "list" -> listOf("pm", "list", "packages", "-u", "--user", userId)
             "details" -> listOf("dumpsys", "package", packageName)

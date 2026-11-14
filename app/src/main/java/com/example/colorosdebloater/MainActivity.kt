@@ -7,6 +7,10 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.IBinder
+import android.graphics.Typeface
+import android.view.KeyEvent
+import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.Button
 import android.widget.EditText
@@ -26,9 +30,13 @@ class MainActivity : Activity() {
     private var service: IPackageService? = null
     private var binding = false
     private var searchGeneration = 0
+    private var shellTranscript = ""
+    private val shellHistory = mutableListOf<String>()
+    private var shellBusy = false
+    private var terminalRefresh: (() -> Unit)? = null
     private val args by lazy {
         Shizuku.UserServiceArgs(ComponentName(this, PackageService::class.java))
-            .processNameSuffix("package_service").daemon(false).version(3)
+            .processNameSuffix("package_service").daemon(false).version(4)
     }
     private val received = Shizuku.OnBinderReceivedListener { connect() }
     private val dead = Shizuku.OnBinderDeadListener {
@@ -77,22 +85,42 @@ class MainActivity : Activity() {
         output = TextView(this).apply { setTextIsSelectable(true) }
         results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(status)
+        fun heading(text: String) = root.addView(TextView(this).apply {
+            this.text = text
+            textSize = 19f
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 20, 0, 4)
+        })
         fun button(title: String, action: () -> Unit) {
             root.addView(Button(this).apply { text = title; setOnClickListener { action() } })
         }
         button("连接或授权 Shizuku") { connect(requestPermission = true) }
+        heading("程序包搜索")
         root.addView(query)
         button("搜索系统应用") { search("system", query.text.toString().trim()) }
         button("模糊搜索程序包") { search("list", query.text.toString().trim()) }
-        button("ADB Shell") { showShell() }
         root.addView(results)
+        heading("应用管理")
         root.addView(pkg)
-        button("查看包详情与诊断") { withPackage { run("details", it, done = ::display) } }
-        button("查看安装路径") { withPackage { run("path", it, done = ::display) } }
-        button("停用当前用户") { change("disable", "停用") }
-        button("卸载当前用户") { change("uninstall", "卸载") }
-        button("恢复当前用户安装") { change("restore", "恢复安装") }
-        button("重新启用") { change("enable", "重新启用") }
+        button("包详情与诊断") { withPackage { run("details", it, done = ::display) } }
+        button("应用操作") {
+            showMenu("应用操作", listOf(
+                "停用" to { change("disable", "停用") },
+                "重新启用" to { change("enable", "重新启用") },
+                "为当前用户卸载" to { change("uninstall", "卸载") },
+                "恢复当前用户安装" to { change("restore", "恢复安装") },
+                "查看安装路径" to { withPackage { run("path", it, done = ::display) } }
+            ))
+        }
+        button("后台限制（AppOps）") {
+            showMenu("后台限制（AppOps）", listOf(
+                "查询状态" to { withPackage { run("background-status", it, done = ::display) } },
+                "限制后台运行" to { change("background-restrict", "限制后台运行") },
+                "恢复系统默认" to { change("background-reset", "恢复系统默认") }
+            ))
+        }
+        heading("命令工具")
+        button("ADB Shell") { showShell() }
         root.addView(output)
         setContentView(ScrollView(this).apply { addView(root, MATCH_PARENT, -2) })
 
@@ -100,6 +128,13 @@ class MainActivity : Activity() {
         Shizuku.addRequestPermissionResultListener(permission)
         Shizuku.addBinderReceivedListenerSticky(received)
         connect()
+    }
+
+    private fun showMenu(title: String, items: List<Pair<String, () -> Unit>>) {
+        AlertDialog.Builder(this).setTitle(title)
+            .setItems(items.map { it.first }.toTypedArray()) { _, index -> items[index].second() }
+            .setNegativeButton("关闭", null)
+            .show()
     }
 
     private fun connect(requestPermission: Boolean = false) {
@@ -140,7 +175,7 @@ class MainActivity : Activity() {
                 .setTitle("确认${label}")
                 .setMessage("目标：$name\n当前 Android 用户：$user\n系统组件的状态变更可能影响相关功能。")
                 .setNegativeButton("取消", null)
-                .setPositiveButton(label) { _, _ -> run(operation, name, user, ::display) }
+                .setPositiveButton(label) { _, _ -> run(operation, name, user, done = ::display) }
                 .show()
         }
     }
@@ -149,11 +184,12 @@ class MainActivity : Activity() {
         operation: String,
         name: String = "",
         user: Int = -1,
+        failed: (String) -> Unit = { output.text = it },
         done: (Bundle) -> Unit
     ) {
         val remote = service
         if (remote == null) {
-            output.text = "请先连接或授权 Shizuku，连接完成后再重试"
+            failed("请先连接或授权 Shizuku，连接完成后再重试")
             connect()
             return
         }
@@ -162,7 +198,7 @@ class MainActivity : Activity() {
             val result = runCatching { remote.execute(operation, name, user) }
             runOnUiThread {
                 if (!isDestroyed && !isFinishing) result.fold(done) {
-                    output.text = "执行失败：${it.message ?: it.javaClass.simpleName}"
+                    failed("执行失败：${it.message ?: it.javaClass.simpleName}")
                 }
             }
         }
@@ -211,46 +247,94 @@ class MainActivity : Activity() {
     }
 
     private fun showShell() {
+        val dialog = AlertDialog.Builder(this, android.R.style.Theme_Material_NoActionBar)
+            .setTitle("ADB Shell")
+            .setPositiveButton("关闭", null)
+            .create()
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val inset = (12 * resources.displayMetrics.density).toInt()
+            setPadding(inset, inset, inset, inset)
+        }
+        val transcript = TextView(this).apply {
+            typeface = Typeface.MONOSPACE
+            setTextIsSelectable(true)
+        }
+        val scroll = ScrollView(this).apply { addView(transcript) }
+        layout.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         val input = EditText(this).apply {
-            hint = "例如 id 或 pm list packages -s"
-            setSingleLine(false)
-            maxLines = 6
+            hint = "$ 输入命令"
+            typeface = Typeface.MONOSPACE
+            isSingleLine = true
+            imeOptions = EditorInfo.IME_ACTION_GO
             filters = arrayOf(android.text.InputFilter.LengthFilter(8192))
         }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("ADB Shell")
-            .setMessage("通过 Shizuku 以 ADB Shell 权限执行单条命令。支持管道，最长等待 20 秒。")
-            .setView(input)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("执行", null)
-            .create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val command = input.text.toString().trim()
-                if (command.isEmpty()) {
-                    input.error = "请输入命令"
-                    return@setOnClickListener
-                }
-                dialog.dismiss()
-                run("shell", command) { result ->
-                    val lines = mutableListOf("退出码 ${result.getInt("exit")}")
-                    if (result.getBoolean("timedOut")) lines.add("执行超时")
-                    val response = result.getString("output").orEmpty()
-                    lines.add(response.take(30_000).ifBlank { "命令没有输出" })
-                    if (result.getBoolean("truncated") || response.length > 30_000) {
-                        lines.add("输出已截断，可缩小命令输出范围后重试。")
-                    }
-                    AlertDialog.Builder(this)
-                        .setTitle("Shell 执行结果")
-                        .setMessage(lines.joinToString("\n\n"))
-                        .setPositiveButton("关闭", null)
-                        .show()
-                        .findViewById<TextView>(android.R.id.message)?.setTextIsSelectable(true)
-                    output.text = "Shell 执行完成，退出码 ${result.getInt("exit")}"
-                }
+        val row = LinearLayout(this)
+        row.addView(input, LinearLayout.LayoutParams(0, -2, 1f))
+        val execute = Button(this).apply { text = "执行" }
+        row.addView(execute)
+        layout.addView(row)
+        val controls = LinearLayout(this)
+        var historyIndex = shellHistory.size
+        fun control(label: String, action: () -> Unit) {
+            controls.addView(Button(this).apply { text = label; setOnClickListener { action() } })
+        }
+        control("上一条") {
+            if (historyIndex > 0) input.setText(shellHistory[--historyIndex])
+            input.setSelection(input.length())
+        }
+        control("下一条") {
+            if (historyIndex < shellHistory.size) historyIndex++
+            input.setText(shellHistory.getOrNull(historyIndex).orEmpty())
+            input.setSelection(input.length())
+        }
+        control("清屏") {
+            shellTranscript = ""
+            terminalRefresh?.invoke()
+        }
+        layout.addView(controls)
+        terminalRefresh = {
+            transcript.text = shellTranscript.ifEmpty { "输入 id 查看 Shell 身份。支持管道，单次等待约 20 秒。\n" }
+            execute.isEnabled = !shellBusy
+            scroll.post { scroll.fullScroll(android.view.View.FOCUS_DOWN) }
+        }
+        fun append(text: String) {
+            shellTranscript = (shellTranscript + text).takeLast(60_000)
+            terminalRefresh?.invoke()
+        }
+        fun submit() {
+            val command = input.text.toString().trim()
+            if (command.isEmpty() || shellBusy) return
+            if (shellHistory.lastOrNull() != command) shellHistory.add(command)
+            if (shellHistory.size > 50) shellHistory.removeAt(0)
+            historyIndex = shellHistory.size
+            input.text.clear()
+            shellBusy = true
+            append("$ $command\n")
+            run("shell", command, failed = { error ->
+                shellBusy = false
+                append("$error\n\n")
+            }) { result ->
+                shellBusy = false
+                val response = result.getString("output").orEmpty()
+                if (response.isNotEmpty()) append(response.take(30_000).trimEnd() + "\n")
+                if (result.getBoolean("truncated") || response.length > 30_000) append("输出已截断\n")
+                if (result.getBoolean("timedOut")) append("执行超时\n")
+                append("[退出码 ${result.getInt("exit")}]\n\n")
             }
         }
+        execute.setOnClickListener { submit() }
+        input.setOnEditorActionListener { _, actionId, event ->
+            val enter = event?.keyCode == KeyEvent.KEYCODE_ENTER
+            if (actionId == EditorInfo.IME_ACTION_GO || enter && event?.action == KeyEvent.ACTION_DOWN) submit()
+            actionId == EditorInfo.IME_ACTION_GO || enter
+        }
+        dialog.setView(layout)
+        dialog.setOnDismissListener { terminalRefresh = null }
         dialog.show()
+        dialog.window?.setLayout(MATCH_PARENT, MATCH_PARENT)
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        terminalRefresh?.invoke()
     }
 
     private fun display(result: Bundle) {
@@ -268,7 +352,8 @@ class MainActivity : Activity() {
         }
         output.text = listOf(
             "用户 ${result.getInt("user")} · 退出码 ${result.getInt("exit")}",
-            result.getString("command").orEmpty(), hint, response.take(30_000)
+            result.getString("command").orEmpty(), result.getString("verification").orEmpty(),
+            hint, response.take(30_000)
         ).filter { it.isNotBlank() }.joinToString("\n\n")
     }
 

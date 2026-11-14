@@ -570,7 +570,7 @@ class MainActivity : Activity() {
         val response = result.getString("output").orEmpty().trim()
         val hint = when {
             "DELETE_FAILED_INTERNAL_ERROR" in response ->
-                "包管理器返回内部卸载错误。这个错误码无法定位原因。请用包详情核对当前用户的 installed/enabled 状态和系统包标记，再核对设备管理策略及 ColorOS 的限制。"
+                "包管理器返回内部卸载错误。这个错误码无法定位原因。请用包详情核对当前用户的 installed/enabled 状态和系统包标记，再核对设备管理策略及设备厂商的限制。"
             "DELETE_FAILED_DEVICE_POLICY_MANAGER" in response || "DELETE_FAILED_OWNER_BLOCKED" in response ->
                 "请核对设备管理应用或设备所有者设置的卸载限制。"
             "DELETE_FAILED_USER_RESTRICTED" in response -> "请核对当前 Android 用户的卸载限制。"

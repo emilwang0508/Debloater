@@ -3,7 +3,7 @@
     <!-- System app search resolves labels for packages discovered at runtime. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
-    <application android:label="ColorOS Debloater"
+    <application android:label="Debloater"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false">
         <provider

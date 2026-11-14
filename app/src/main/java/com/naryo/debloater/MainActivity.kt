@@ -318,6 +318,10 @@ class MainActivity : Activity() {
                 .setNegativeButton(R.string.cancel, null)
                 .show()
         })
+        dialog.window?.apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        }
         dialog.setContentView(overlay)
         dialog.show()
         dialog.window?.let {

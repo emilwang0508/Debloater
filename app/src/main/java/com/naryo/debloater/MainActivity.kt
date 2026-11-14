@@ -7,7 +7,11 @@ import android.os.Build
 import android.view.Window
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.content.ActivityNotFoundException
 import android.content.ComponentName
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -72,7 +76,7 @@ class MainActivity : Activity() {
     private var terminalRefresh: (() -> Unit)? = null
     private val args by lazy {
         Shizuku.UserServiceArgs(ComponentName(this, PackageService::class.java))
-            .processNameSuffix("package_service").daemon(false).version(6)
+            .processNameSuffix("package_service").daemon(false).version(7)
     }
     private val received = Shizuku.OnBinderReceivedListener { connect() }
     private val dead = Shizuku.OnBinderDeadListener {
@@ -312,6 +316,7 @@ class MainActivity : Activity() {
         }
         val actions = mutableListOf<Pair<String, () -> Unit>>(
             "查看应用详情" to { run("details", name, done = ::display) },
+            "权限与通知" to { showPermissionSettings(name) },
             "查询后台限制" to { run("background-status", name, done = ::display) }
         )
         if (name != packageName) {
@@ -321,6 +326,7 @@ class MainActivity : Activity() {
             actions += "解除冻结" to { change(name, "unfreeze", "解除冻结") }
             actions += "更多操作" to {
                 showMenu(name, listOf(
+                    "强行停止" to { change(name, "force-stop", "强行停止") },
                     "停用应用" to { change(name, "disable", "停用应用") },
                     "重新启用" to { change(name, "enable", "重新启用") },
                     "为当前用户卸载" to { change(name, "uninstall", "卸载应用") },
@@ -332,6 +338,25 @@ class MainActivity : Activity() {
         showMenu(if (title.isBlank()) name else "$title\n$name", actions)
     }
 
+    private fun showPermissionSettings(name: String) {
+        val appInfo = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", name, null))
+        val notifications = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, name)
+        showMenu("权限与通知", listOf(
+            "应用权限（系统设置）" to { launchSettings(appInfo) },
+            "应用通知（系统设置）" to { launchSettings(notifications, appInfo) }
+        ))
+    }
+
+    private fun launchSettings(intent: Intent, fallback: Intent? = null) {
+        try {
+            startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            if (fallback != null) launchSettings(fallback)
+            else showResult("无法打开设置", "请在系统设置的应用管理中查找该应用。")
+        }
+    }
+
     private fun showResult(title: String, message: String) {
         AlertDialog.Builder(this).setTitle(title).setMessage(message)
             .setPositiveButton("关闭", null).show()
@@ -341,9 +366,11 @@ class MainActivity : Activity() {
     private fun change(name: String, operation: String, label: String) {
         run("user") { info ->
             val user = info.getInt("user", -1)
-            val effect = if (operation == "freeze")
-                "挂起后，应用界面和通知会受限，后台服务仍可能运行。"
-            else "系统组件的状态变更可能影响相关功能。"
+            val effect = when (operation) {
+                "freeze" -> "挂起后，应用界面和通知会受限，后台服务仍可能运行。"
+                "force-stop" -> "将结束应用当前运行，未保存的内容可能丢失。"
+                else -> "系统组件的状态变更可能影响相关功能。"
+            }
             AlertDialog.Builder(this)
                 .setTitle("确认${label}")
                 .setMessage("目标：$name\n当前 Android 用户：$user\n$effect")
@@ -677,6 +704,8 @@ class MainActivity : Activity() {
             .find(response)?.groupValues?.get(1)
         val summary = when {
             result.getString("verification") != null -> result.getString("verification").orEmpty()
+            result.getInt("exit") == 0 && result.getString("command").orEmpty().startsWith("am force-stop ") ->
+                "系统已接受强行停止命令，应用的启用状态不变。"
             backgroundStatus == "ignore" -> "已限制后台运行"
             "Default mode: allow" in response -> "使用系统默认规则，允许后台运行"
             else -> ""

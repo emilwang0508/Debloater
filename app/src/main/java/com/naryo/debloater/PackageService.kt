@@ -82,13 +82,14 @@ class PackageService(private val context: Context) : IPackageService.Stub() {
                     })
                 }
             }
+            "force-stop" -> listOf("am", "force-stop", "--user", userId, packageName)
             "disable" -> listOf("pm", "disable-user", "--user", userId, packageName)
             "uninstall" -> listOf("pm", "uninstall", "--user", userId, packageName)
             "restore" -> listOf("cmd", "package", "install-existing", "--user", userId, packageName)
             "enable" -> listOf("pm", "enable", "--user", userId, packageName)
             else -> error("未知操作")
         }
-        if (operation in setOf("disable", "uninstall", "restore", "enable")) {
+        if (operation in setOf("disable", "uninstall", "restore", "enable", "force-stop")) {
             check(user == expectedUser) { "当前 Android 用户已切换，请重新确认操作。" }
         }
         return run(*command.toTypedArray()).apply { putInt("user", user) }

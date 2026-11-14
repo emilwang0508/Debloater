@@ -2,6 +2,11 @@ package com.example.colorosdebloater
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
+import android.os.Build
+import android.view.Window
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.content.ComponentName
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
@@ -97,21 +102,10 @@ class MainActivity : Activity() {
         setTheme(if (nightMode) android.R.style.Theme_Material_NoActionBar
             else android.R.style.Theme_Material_Light_NoActionBar)
         super.onCreate(savedInstanceState)
-        @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = if (nightMode) 0 else
-            android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
-                if (android.os.Build.VERSION.SDK_INT >= 26) android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0
         val root = column().apply {
             setBackgroundColor(adaptive(0xFFF2F6F3.toInt(), 0xFF121B17.toInt()))
-            setOnApplyWindowInsetsListener { view, insets ->
-                @Suppress("DEPRECATION")
-                view.setPadding(dp(20) + insets.systemWindowInsetLeft,
-                    dp(18) + insets.systemWindowInsetTop,
-                    dp(20) + insets.systemWindowInsetRight,
-                    dp(24) + insets.systemWindowInsetBottom)
-                insets
-            }
         }
+        fitSystemAreas(window, root, horizontal = 20, vertical = 12)
         root.addView(label("应用管理", 32f, bold = true))
         status = label("", 14f)
         val connectionCard = card(root)
@@ -447,17 +441,48 @@ class MainActivity : Activity() {
             else "${appAdapter.count} 个应用 · 用户 $inventoryUser"
     }
 
-    private fun showShell() {
-        val dialog = AlertDialog.Builder(this, if (nightMode) android.R.style.Theme_Material_NoActionBar
-            else android.R.style.Theme_Material_Light_NoActionBar)
-            .setTitle("ADB Shell")
-            .setPositiveButton("关闭", null)
-            .create()
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            val inset = (12 * resources.displayMetrics.density).toInt()
-            setPadding(inset, inset, inset, inset)
+    @Suppress("DEPRECATION")
+    private fun fitSystemAreas(window: Window, root: View, horizontal: Int, vertical: Int) {
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        val horizontalPadding = dp(horizontal)
+        val verticalPadding = dp(vertical)
+        root.setPadding(horizontalPadding, verticalPadding, horizontalPadding, verticalPadding)
+        if (Build.VERSION.SDK_INT < 30) {
+            root.fitsSystemWindows = true
+            window.decorView.systemUiVisibility = if (nightMode) 0 else
+                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+            return
         }
+        window.setDecorFitsSystemWindows(false)
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+        val appearance = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+            WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+        window.insetsController?.setSystemBarsAppearance(if (nightMode) 0 else appearance, appearance)
+        root.setOnApplyWindowInsetsListener { view, insets ->
+            val safe = insets.getInsets(WindowInsets.Type.systemBars() or
+                WindowInsets.Type.displayCutout() or WindowInsets.Type.mandatorySystemGestures() or
+                WindowInsets.Type.ime())
+            view.setPadding(horizontalPadding + safe.left, verticalPadding + safe.top,
+                horizontalPadding + safe.right, verticalPadding + safe.bottom)
+            WindowInsets.CONSUMED
+        }
+        root.requestApplyInsets()
+    }
+
+    private fun showShell() {
+        val dialog = Dialog(this, if (nightMode) android.R.style.Theme_Material_NoActionBar
+            else android.R.style.Theme_Material_Light_NoActionBar)
+        val layout = column().apply {
+            setBackgroundColor(adaptive(0xFFF2F6F3.toInt(), 0xFF121B17.toInt()))
+        }
+        val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        header.addView(label("ADB Shell", 20f, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(Button(this).apply {
+            text = "关闭"
+            setOnClickListener { dialog.dismiss() }
+        })
+        layout.addView(header)
         val transcript = TextView(this).apply {
             typeface = Typeface.MONOSPACE
             setTextIsSelectable(true)
@@ -475,7 +500,6 @@ class MainActivity : Activity() {
         row.addView(input, LinearLayout.LayoutParams(0, -2, 1f))
         val execute = Button(this).apply { text = "执行" }
         row.addView(execute)
-        layout.addView(row)
         val controls = LinearLayout(this)
         var historyIndex = shellHistory.size
         fun control(label: String, action: () -> Unit) {
@@ -495,10 +519,11 @@ class MainActivity : Activity() {
             terminalRefresh?.invoke()
         }
         layout.addView(controls)
+        layout.addView(row)
         terminalRefresh = {
             transcript.text = shellTranscript.ifEmpty { "输入 id 查看 Shell 身份。支持管道，单次等待约 20 秒。\n" }
             execute.isEnabled = !shellBusy
-            scroll.post { scroll.fullScroll(android.view.View.FOCUS_DOWN) }
+            scroll.post { scroll.scrollTo(0, transcript.height) }
         }
         fun append(text: String) {
             shellTranscript = (shellTranscript + text).takeLast(60_000)
@@ -531,11 +556,13 @@ class MainActivity : Activity() {
             if (actionId == EditorInfo.IME_ACTION_GO || enter && event?.action == KeyEvent.ACTION_DOWN) submit()
             actionId == EditorInfo.IME_ACTION_GO || enter
         }
-        dialog.setView(layout)
+        dialog.setContentView(layout)
         dialog.setOnDismissListener { terminalRefresh = null }
         dialog.show()
-        dialog.window?.setLayout(MATCH_PARENT, MATCH_PARENT)
-        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        dialog.window?.let { terminalWindow ->
+            terminalWindow.setLayout(MATCH_PARENT, MATCH_PARENT)
+            fitSystemAreas(terminalWindow, layout, horizontal = 12, vertical = 8)
+        }
         terminalRefresh?.invoke()
     }
 

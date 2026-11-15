@@ -10,7 +10,7 @@ Debloater 是一款通过 Shizuku 管理 Android 应用的免 Root 工具。应�
 
 1. 打开 [v0.9.0 发布页](https://github.com/emilwang0508/Debloater/releases/tag/v0.9.0)，在 **Assets** 中下载 `Debloater-v0.9.0.apk` 并安装。APK 最低安装要求为 Android 8.0（API 26），实际使用还需要设备支持 Shizuku。
 2. 安装并启动 [Shizuku](https://shizuku.rikka.app/) 13 或更新版本，可使用无线调试或 USB ADB。
-3. 打开 Debloater，点「连接 / 授权」，允许 Shizuku 授权。旧版包名不同，可与本版并存，本版需要单独授权。
+3. 打开 Debloater，未授权时点「授权」，允许 Shizuku 授权。旧版包名不同，可与本版并存，本版需要单独授权。
 
 ### 查找与管理应用
 从左上角打开侧边栏，点「语言」可选择跟随系统、简体中文或 English。跟随系统时，中文系统显示简体中文，其他系统语言显示英文。列表优先读取本地缓存，搜索只筛选缓存。点「刷新」或完成卸载、恢复、停用等操作后会重新读取。
@@ -36,7 +36,7 @@ Debloater is a rootless Android app-management tool powered by Shizuku. Its pack
 
 1. Download `Debloater-v0.9.0.apk` from **Assets** on the [v0.9.0 release page](https://github.com/emilwang0508/Debloater/releases/tag/v0.9.0) and install it. The APK requires Android 8.0 (API 26) or later. The device must also support Shizuku.
 2. Install and start [Shizuku](https://shizuku.rikka.app/) 13 or newer using wireless debugging or USB ADB.
-3. Open Debloater, tap **连接 / 授权** (Connect / authorize), and grant Shizuku access. Builds with the old package ID can coexist with this version, which needs its own authorization.
+3. Open Debloater, tap **授权** (Authorize) when prompted, and grant Shizuku access. Builds with the old package ID can coexist with this version, which needs its own authorization.
 
 ### Find and manage apps
 Open the top-left menu and select Language to choose Follow system, Simplified Chinese, or English. Follow system uses Simplified Chinese for Chinese system locales and English otherwise. Search filters the cached list. Refresh or a package state change reloads the list.

@@ -10,7 +10,7 @@
     <string name="authorization_denied">可在 Shizuku 的授权管理中允许 Debloater。</string>
     <string name="connected">Shizuku · 已连接</string>
     <string name="app_management">应用管理</string>
-    <string name="connect">连接 / 授权</string>
+    <string name="connect">授权</string>
     <string name="search_hint">搜索应用名称或包名</string>
     <string name="app_filter">应用分类</string>
     <string name="refresh">刷新</string>

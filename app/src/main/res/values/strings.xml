@@ -10,7 +10,7 @@
     <string name="authorization_denied">Allow Debloater in Shizuku’s app authorization settings.</string>
     <string name="connected">Shizuku · Connected</string>
     <string name="app_management">Manage apps</string>
-    <string name="connect">Connect</string>
+    <string name="connect">Authorize</string>
     <string name="search_hint">Search app names or packages</string>
     <string name="app_filter">App category</string>
     <string name="refresh">Refresh</string>

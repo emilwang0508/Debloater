@@ -65,6 +65,7 @@ class MainActivity : Activity() {
     private var matches = emptyList<AppRow>()
     private val pageSize = 30
     private lateinit var status: TextView
+    private lateinit var authorizeButton: Button
     private data class AppRow(val name: String, val title: String, val kind: String, val state: String)
     private lateinit var results: ListView
     private lateinit var query: EditText
@@ -77,6 +78,7 @@ class MainActivity : Activity() {
     private val scopes get() = listOf(getString(R.string.installed), getString(R.string.system_apps), getString(R.string.user_apps), getString(R.string.disabled), getString(R.string.uninstalled))
     private var service: IPackageService? = null
     private var binding = false
+    private var connectionReady = false
     private var shellTranscript = ""
     private val shellHistory = mutableListOf<String>()
     private var shellBusy = false
@@ -90,6 +92,7 @@ class MainActivity : Activity() {
         service = null
         invalidateInventory()
         binding = false
+        authorizeButton.visibility = View.GONE
         status.text = getString(R.string.disconnected)
     }
     private val permission = Shizuku.OnRequestPermissionResultListener { request, grant ->
@@ -102,6 +105,7 @@ class MainActivity : Activity() {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             service = IPackageService.Stub.asInterface(binder)
             binding = false
+            authorizeButton.visibility = View.GONE
             status.text = getString(R.string.connected)
             run("user") { info ->
                 if (inventoryUser != info.getInt("user", -1)) {
@@ -119,6 +123,7 @@ class MainActivity : Activity() {
             invalidateInventory()
             binding = false
             status.text = getString(R.string.disconnected)
+            connect()
         }
     }
 
@@ -168,6 +173,7 @@ class MainActivity : Activity() {
         }
         val connectionRow = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(48)
             background = surface(adaptive(Color.WHITE, 0xFF1D2A24.toInt()))
             setPadding(dp(12), 0, dp(4), 0)
         }
@@ -175,13 +181,15 @@ class MainActivity : Activity() {
             topMargin = dp(8)
         })
         connectionRow.addView(status, LinearLayout.LayoutParams(0, -2, 1f))
-        connectionRow.addView(Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+        authorizeButton = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+            visibility = View.GONE
             text = getString(R.string.connect)
             isAllCaps = false
             minimumHeight = dp(48)
             setTextColor(adaptive(0xFF175C47.toInt(), 0xFFA5DDBF.toInt()))
             setOnClickListener { connect(requestPermission = true) }
-        })
+        }
+        connectionRow.addView(authorizeButton)
 
         query = EditText(this).apply {
             hint = getString(R.string.search_hint)
@@ -268,6 +276,7 @@ class MainActivity : Activity() {
         fitSystemAreas(window, root, horizontal = 20, vertical = 12)
 
         restoreInventory {
+            connectionReady = true
             Shizuku.addBinderDeadListener(dead)
             Shizuku.addRequestPermissionResultListener(permission)
             Shizuku.addBinderReceivedListenerSticky(received)
@@ -341,15 +350,22 @@ class MainActivity : Activity() {
 
     private fun connectionHelp(state: String, message: String, showHelp: Boolean) {
         status.text = "Shizuku · $state"
+        status.setOnClickListener { showResult("Shizuku", message) }
         if (showHelp) showResult("Shizuku", message)
     }
 
     private fun connect(requestPermission: Boolean = false) {
         try {
+            status.setOnClickListener(null)
+            status.isClickable = false
+            authorizeButton.visibility = View.GONE
             when {
                 !Shizuku.pingBinder() -> connectionHelp(getString(R.string.not_running), getString(R.string.start_shizuku), requestPermission)
                 Shizuku.isPreV11() || Shizuku.getVersion() < 13 -> connectionHelp(getString(R.string.update_required), getString(R.string.update_shizuku), requestPermission)
                 Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED -> {
+                    service = null
+                    binding = false
+                    authorizeButton.visibility = View.VISIBLE
                     status.text = getString(R.string.awaiting_authorization)
                     if (requestPermission) {
                         if (Shizuku.shouldShowRequestPermissionRationale()) {
@@ -362,6 +378,7 @@ class MainActivity : Activity() {
                     status.text = getString(R.string.connecting)
                     Shizuku.bindUserService(args, connection)
                 }
+                service != null -> status.text = getString(R.string.connected)
             }
         } catch (error: Exception) {
             binding = false
@@ -887,6 +904,11 @@ class MainActivity : Activity() {
         super.onSaveInstanceState(outState)
         outState.putString("searchQuery", query.text.toString())
         outState.putInt("scope", scope.selectedItemPosition)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (connectionReady) connect()
     }
 
     override fun onDestroy() {

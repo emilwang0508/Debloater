@@ -1,14 +1,21 @@
 # Debloater
 
-[简体中文](#简体中文) · [English](#english) · [APK / GitHub Release](https://github.com/emilwang0508/Debloater/releases/tag/v0.9.0)
+[简体中文](#简体中文) · [English](#english) · [APK / GitHub Release](https://github.com/emilwang0508/Debloater/releases)
 
 ## 简体中文
 
 Debloater 是一款通过 Shizuku 管理 Android 应用的免 Root 工具。应用包名为 `com.naryo.debloater`。
 
+### v0.9.1 更新内容
+
+- 新增侧边栏和语言二级菜单，支持简体中文、English 及跟随系统。
+- 搜索与筛选直接使用本地缓存。应用安装、卸载或状态变化后自动刷新，刷新时尽量保留列表位置。
+- 新增操作记录，保留最近 50 条记录。已确认的冻结、停用和卸载记录可进入相应的恢复操作。
+- Shizuku 状态栏仅在已连接且未授权时显示授权入口。
+
 ### 安装与连接
 
-1. 打开 [v0.9.0 发布页](https://github.com/emilwang0508/Debloater/releases/tag/v0.9.0)，在 **Assets** 中下载 `Debloater-v0.9.0.apk` 并安装。APK 最低安装要求为 Android 8.0（API 26），实际使用还需要设备支持 Shizuku。
+1. 打开 [GitHub 发布页](https://github.com/emilwang0508/Debloater/releases)，在 **Assets** 中下载所需版本的 APK（v0.9.1 的文件名为 `Debloater-v0.9.1.apk`） 并安装。APK 最低安装要求为 Android 8.0（API 26），实际使用还需要设备支持 Shizuku。
 2. 安装并启动 [Shizuku](https://shizuku.rikka.app/) 13 或更新版本，可使用无线调试或 USB ADB。
 3. 打开 Debloater，未授权时点「授权」，允许 Shizuku 授权。旧版包名不同，可与本版并存，本版需要单独授权。
 
@@ -33,9 +40,16 @@ Debloater 是一款通过 Shizuku 管理 Android 应用的免 Root 工具。应�
 
 Debloater is a rootless Android app-management tool powered by Shizuku. Its package ID is `com.naryo.debloater`. Menu names below include the Chinese labels shown in the app.
 
+### What's new in v0.9.1
+
+- The navigation drawer includes a Language submenu for Simplified Chinese, English, and Follow system.
+- Search and filters use the cached app list. Package changes refresh the list automatically and preserve the scroll position when possible.
+- Operation history stores the last 50 entries. Confirmed freeze, disable, and uninstall entries offer their corresponding recovery actions.
+- The Shizuku status row shows Authorize only when connected and permission has yet to be granted.
+
 ### Install and connect
 
-1. Download `Debloater-v0.9.0.apk` from **Assets** on the [v0.9.0 release page](https://github.com/emilwang0508/Debloater/releases/tag/v0.9.0) and install it. The APK requires Android 8.0 (API 26) or later. The device must also support Shizuku.
+1. Download the desired APK from **Assets** on the [GitHub Releases page](https://github.com/emilwang0508/Debloater/releases) and install it. For v0.9.1, the asset is named `Debloater-v0.9.1.apk`. The APK requires Android 8.0 (API 26) or later. The device must also support Shizuku.
 2. Install and start [Shizuku](https://shizuku.rikka.app/) 13 or newer using wireless debugging or USB ADB.
 3. Open Debloater, tap **授权** (Authorize) when prompted, and grant Shizuku access. Builds with the old package ID can coexist with this version, which needs its own authorization.
 
@@ -71,3 +85,19 @@ APK 输出 / APK output: `app/build/outputs/apk/debug/app-debug.apk`.
 将 `release/vX.Y.Z` 合入 `main` 前，在 `app/build.gradle.kts` 将 `versionName` 设为 `X.Y.Z`，并将 `versionCode` 提高到大于已分发的所有构建（包括预览版）。通过 PR 合并，等版本检查和 APK 构建通过后再合入。
 
 Before merging `release/vX.Y.Z` into `main`, set `versionName` to `X.Y.Z` in `app/build.gradle.kts` and increase `versionCode` above every distributed build, including previews. Merge through a pull request after the version check and APK build pass.
+
+### 正式发布 / Publish a release
+
+在 GitHub Actions 中一次性配置仓库签名 secrets：`RELEASE_KEYSTORE_BASE64`（Base64 编码的 keystore）、`RELEASE_KEYSTORE_PASSWORD`、`RELEASE_KEY_ALIAS` 和 `RELEASE_KEY_PASSWORD`。沿用上一版的签名密钥可支持覆盖安装。
+
+Set the repository's Android signing secrets in GitHub Actions once. Use `RELEASE_KEYSTORE_BASE64` for the Base64-encoded keystore, plus `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`, and `RELEASE_KEY_PASSWORD`. Reuse the previous release's signing key for in-place upgrades.
+
+合并后，从 `main` 上版本号匹配的提交推送标签。Actions 将构建、签名并验证 APK，再创建 GitHub Release。
+
+After merging, push a version tag pointing to the matching commit on `main`. Actions builds, signs, and verifies the APK, then creates the GitHub Release.
+
+```sh
+git fetch origin main
+git tag v0.9.1 origin/main
+git push origin refs/tags/v0.9.1
+```

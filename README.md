@@ -65,3 +65,9 @@ gradle assembleDebug lintDebug
 ```
 
 APK 输出 / APK output: `app/build/outputs/apk/debug/app-debug.apk`.
+
+### 版本合并 / Release merges
+
+将 `release/vX.Y.Z` 合入 `main` 前，在 `app/build.gradle.kts` 将 `versionName` 设为 `X.Y.Z`，并将 `versionCode` 提高到大于已分发的所有构建（包括预览版）。通过 PR 合并，等版本检查和 APK 构建通过后再合入。
+
+Before merging `release/vX.Y.Z` into `main`, set `versionName` to `X.Y.Z` in `app/build.gradle.kts` and increase `versionCode` above every distributed build, including previews. Merge through a pull request after the version check and APK build pass.

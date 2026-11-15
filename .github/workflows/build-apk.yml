@@ -2,7 +2,9 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, master, release/v0.9.0, release/v0.9.1]
+    branches: [main, master, 'release/v*']
+  pull_request:
+    branches: [main]
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -10,6 +12,44 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Check Android version
+        id: version
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          read_version_name() {
+            sed -nE 's/^[[:space:]]*versionName = "([^"]+)"[[:space:]]*$/\1/p'
+          }
+          read_version_code() {
+            sed -nE 's/^[[:space:]]*versionCode = ([0-9]+)[[:space:]]*$/\1/p'
+          }
+          config=app/build.gradle.kts
+          version="$(read_version_name < "$config")"
+          code="$(read_version_code < "$config")"
+          stable='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+          if [[ ! "$version" =~ ^${stable}(-preview\.[1-9][0-9]*)?$ || ! "$code" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error file=$config::Expected a valid versionName and positive versionCode"
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/heads/main || "$GITHUB_BASE_REF" == main ]] && [[ ! "$version" =~ ^${stable}$ ]]; then
+            echo "::error file=$config::main requires a stable versionName (X.Y.Z)"
+            exit 1
+          fi
+          if [[ "$GITHUB_BASE_REF" == main && "$GITHUB_HEAD_REF" == release/v* ]]; then
+            expected="${GITHUB_HEAD_REF#release/v}"
+            base_code="$(git show "$BASE_SHA:$config" | read_version_code)"
+            if [[ "$version" != "$expected" ]]; then
+              echo "::error file=$config::Set versionName to $expected before merging $GITHUB_HEAD_REF"
+              exit 1
+            fi
+            if [[ ! "$base_code" =~ ^[1-9][0-9]*$ ]] || (( code <= base_code )); then
+              echo "::error file=$config::Increase versionCode above main ($base_code)"
+              exit 1
+            fi
+          fi
+          echo "name=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -25,6 +65,6 @@ jobs:
         run: gradle --no-daemon assembleDebug lintDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: Debloater-debug-apk
+          name: Debloater-v${{ steps.version.outputs.name }}-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error

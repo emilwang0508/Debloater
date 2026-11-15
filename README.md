@@ -101,3 +101,7 @@ git fetch origin main
 git tag v0.9.1 origin/main
 git push origin refs/tags/v0.9.1
 ```
+
+也可以从同一个 `main` 提交推送 `publish/vX.Y.Z` 分支。签名验证成功后，Actions 会创建对应标签和 Release。
+
+You can also push a `publish/vX.Y.Z` branch from the same `main` commit. Actions creates the tag and release after APK signature verification.

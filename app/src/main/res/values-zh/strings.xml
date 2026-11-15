@@ -108,4 +108,9 @@
     <string name="follow_system">跟随系统</string>
     <string name="language_value">语言 · %1$s</string>
     <string name="no_matches">没有匹配的应用</string>
+    <string name="operation_history">操作记录</string>
+    <string name="history_empty">暂无操作记录</string>
+    <string name="history_confirmed">已确认</string>
+    <string name="history_unconfirmed">未确认</string>
+    <string name="history_details">%1$s · 用户 %2$d · %3$s</string>
 </resources>

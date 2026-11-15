@@ -108,4 +108,9 @@
     <string name="follow_system">Follow system</string>
     <string name="language_value">Language · %1$s</string>
     <string name="no_matches">No matching apps</string>
+    <string name="operation_history">Operation history</string>
+    <string name="history_empty">No operations recorded</string>
+    <string name="history_confirmed">Confirmed</string>
+    <string name="history_unconfirmed">Unconfirmed</string>
+    <string name="history_details">%1$s · User %2$d · %3$s</string>
 </resources>

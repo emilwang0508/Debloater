@@ -8,6 +8,12 @@ import android.view.Window
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.content.ActivityNotFoundException
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
+import android.os.Handler
+import android.os.Looper
+import android.text.format.DateFormat
+import java.util.Date
 import android.content.ComponentName
 import android.content.Context
 import android.widget.FrameLayout
@@ -87,6 +93,24 @@ class MainActivity : Activity() {
         Shizuku.UserServiceArgs(ComponentName(this, PackageService::class.java))
             .processNameSuffix("package_service").daemon(false).version(8)
     }
+    private val refreshHandler = Handler(Looper.getMainLooper())
+    private var inventoryReadAt = 0L
+    private var inventoryDirty = false
+    private val refreshInventory = Runnable {
+        if (connectionReady && service != null && inventoryDirty) loadInventory()
+    }
+    private val packageChanges = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val name = intent.data?.schemeSpecificPart ?: return
+            icons.remove(name)
+            missingIcons.remove(name)
+            inventoryDirty = true
+            getSharedPreferences("inventory", MODE_PRIVATE).edit().putLong("invalidated", System.currentTimeMillis()).apply()
+            refreshHandler.removeCallbacks(refreshInventory)
+            refreshHandler.postDelayed(refreshInventory, 500)
+        }
+    }
+
     private val received = Shizuku.OnBinderReceivedListener { connect() }
     private val dead = Shizuku.OnBinderDeadListener {
         service = null
@@ -114,7 +138,7 @@ class MainActivity : Activity() {
                     appAdapter.rows = emptyList()
                     appAdapter.notifyDataSetChanged()
                     loadInventory()
-                }
+                } else refreshStaleInventory()
             }
         }
 
@@ -275,6 +299,14 @@ class MainActivity : Activity() {
         setContentView(root)
         fitSystemAreas(window, root, horizontal = 20, vertical = 12)
 
+        val packageFilter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_CHANGED)
+            addDataScheme("package")
+        }
+        // This filter contains only protected system broadcasts.
+        registerReceiver(packageChanges, packageFilter)
         restoreInventory {
             connectionReady = true
             Shizuku.addBinderDeadListener(dead)
@@ -326,6 +358,10 @@ class MainActivity : Activity() {
                 }
                 .setNegativeButton(R.string.cancel, null)
                 .show()
+        })
+        panel.addView(action(getString(R.string.operation_history)) {
+            dialog.dismiss()
+            showOperationHistory()
         })
         dialog.window?.apply {
             setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
@@ -496,10 +532,69 @@ class MainActivity : Activity() {
             .findViewById<TextView>(android.R.id.message)?.setTextIsSelectable(true)
     }
 
-    private fun change(name: String, operation: String, label: String) {
+    private fun history() = getSharedPreferences("operations", MODE_PRIVATE)
+
+    private fun historyEntries(): JSONArray = runCatching {
+        JSONArray(history().getString("entries", "[]"))
+    }.getOrElse { JSONArray() }
+
+    private fun recordOperation(name: String, operation: String, user: Int, confirmed: Boolean) {
+        val previous = historyEntries()
+        val entries = JSONArray().put(JSONObject().put("package", name).put("operation", operation)
+            .put("user", user).put("confirmed", confirmed).put("at", System.currentTimeMillis()))
+        for (index in 0 until minOf(previous.length(), 49)) entries.put(previous.getJSONObject(index))
+        history().edit().putString("entries", entries.toString()).apply()
+    }
+
+    private fun showOperationHistory() {
+        val entries = historyEntries()
+        if (entries.length() == 0) {
+            showResult(getString(R.string.operation_history), getString(R.string.history_empty))
+            return
+        }
+        val actions = (0 until entries.length()).map { index ->
+            val entry = entries.getJSONObject(index)
+            val name = entry.getString("package")
+            val operation = entry.getString("operation")
+            val user = entry.getInt("user")
+            val confirmed = entry.getBoolean("confirmed")
+            val title = getString(when (operation) {
+                "freeze" -> R.string.freeze
+                "unfreeze" -> R.string.unfreeze
+                "disable" -> R.string.disable
+                "enable" -> R.string.enable
+                "uninstall" -> R.string.uninstall
+                else -> R.string.restore
+            })
+            val state = getString(if (confirmed) R.string.history_confirmed else R.string.history_unconfirmed)
+            val time = DateFormat.getMediumDateFormat(this).format(Date(entry.getLong("at"))) +
+                " " + DateFormat.getTimeFormat(this).format(Date(entry.getLong("at")))
+            val details = getString(R.string.history_details, name, user, time)
+            "$title · $state\n$details" to {
+                val recovery = when (operation) {
+                    "freeze" -> "unfreeze" to R.string.unfreeze
+                    "disable" -> "enable" to R.string.enable
+                    "uninstall" -> "restore" to R.string.restore
+                    else -> null
+                }
+                val options = mutableListOf(getString(R.string.app_details) to {
+                    run("details", name, done = ::display)
+                })
+                if (confirmed && recovery != null && name != packageName) {
+                    options.add(getString(recovery.second) to {
+                        change(name, recovery.first, getString(recovery.second), user)
+                    })
+                }
+                showMenu(details, options)
+            }
+        }
+        showMenu(getString(R.string.operation_history), actions)
+    }
+
+    private fun change(name: String, operation: String, label: String, originalUser: Int? = null) {
         run("user") { info ->
             val user = info.getInt("user", -1)
-            if (inventoryUser != null && inventoryUser != user) {
+            if ((originalUser ?: inventoryUser)?.let { it != user } == true) {
                 loadInventory()
                 showResult(getString(R.string.operation_incomplete), getString(R.string.user_changed))
                 return@run
@@ -514,6 +609,18 @@ class MainActivity : Activity() {
                 .setMessage(getString(R.string.action_target, name, user, effect))
                 .setNegativeButton(getString(R.string.cancel), null)
                 .setPositiveButton(label) { _, _ -> run(operation, name, user) { result ->
+                    val output = result.getString("output").orEmpty()
+                    val confirmed = result.getInt("exit") == 0 && when (operation) {
+                        "freeze", "unfreeze" -> result.getBoolean("verified")
+                        "disable" -> "new state: disabled-user" in output
+                        "enable" -> "new state: enabled" in output
+                        "uninstall" -> output.lineSequence().any { it.trim() == "Success" }
+                        "restore" -> "installed for user" in output
+                        else -> false
+                    }
+                    if (operation in setOf("freeze", "unfreeze", "disable", "enable", "uninstall", "restore")) {
+                        recordOperation(name, operation, user, confirmed)
+                    }
                     display(result)
                     if (operation in setOf("disable", "enable", "uninstall", "restore")) loadInventory()
                 } }
@@ -621,8 +728,11 @@ class MainActivity : Activity() {
     }
 
     private fun restoreInventory(ready: () -> Unit) {
-        val saved = getSharedPreferences("inventory", MODE_PRIVATE)
-            .getString("rows_${android.os.Process.myUserHandle().hashCode()}_${resources.configuration.locales[0].language}", null)
+        val preferences = getSharedPreferences("inventory", MODE_PRIVATE)
+        val key = inventoryKey(android.os.Process.myUserHandle().hashCode())
+        val saved = preferences.getString(key, null)
+        inventoryReadAt = preferences.getLong("${key}_time", 0L)
+        inventoryDirty = preferences.getLong("invalidated", 0L) > inventoryReadAt
         if (saved == null) {
             ready()
             return
@@ -648,11 +758,21 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun saveInventory(user: Int, rows: List<AppRow>) {
+    private fun inventoryKey(user: Int) = "rows_${user}_${resources.configuration.locales[0].language}"
+
+    private fun refreshStaleInventory() {
+        if (service != null && (inventoryDirty || System.currentTimeMillis() - inventoryReadAt >= 300_000L)) {
+            loadInventory()
+        }
+    }
+
+    private fun saveInventory(user: Int, rows: List<AppRow>, readAt: Long) {
         val data = JSONArray()
         for (row in rows) data.put(JSONObject().put("name", row.name).put("title", row.title)
             .put("kind", row.kind).put("state", row.state))
-        getSharedPreferences("inventory", MODE_PRIVATE).edit().putString("rows_${user}_${resources.configuration.locales[0].language}", data.toString()).apply()
+        val key = inventoryKey(user)
+        getSharedPreferences("inventory", MODE_PRIVATE).edit().putString(key, data.toString())
+            .putLong("${key}_time", readAt).apply()
     }
 
     private fun finishInventoryLoad() {
@@ -669,6 +789,11 @@ class MainActivity : Activity() {
             return
         }
         val connection = service
+        val readAt = System.currentTimeMillis()
+        val position = results.firstVisiblePosition
+        val offset = results.getChildAt(0)?.top ?: 0
+        val previousQuery = query.text.toString()
+        val previousScope = scope.selectedItemPosition
         loadingInventory = true
         missingIcons.clear()
         summary.text = getString(R.string.loading_apps)
@@ -698,12 +823,16 @@ class MainActivity : Activity() {
                 }.sortedWith(compareBy<AppRow, String>(String.CASE_INSENSITIVE_ORDER) {
                     it.title.ifBlank { it.name }
                 }.thenBy { it.name })
-                saveInventory(user, parsed)
+                saveInventory(user, parsed, readAt)
                 runOnUiThread {
                     if (!isDestroyed && !isFinishing && service === connection) {
                         inventory = parsed
                         inventoryUser = user
-                        renderInventory()
+                        inventoryReadAt = readAt
+                        inventoryDirty = getSharedPreferences("inventory", MODE_PRIVATE)
+                            .getLong("invalidated", 0L) > readAt
+                        val sameSearch = previousQuery == query.text.toString() && previousScope == scope.selectedItemPosition
+                        renderInventory(if (sameSearch) position else 0, if (sameSearch) offset else 0)
                         finishInventoryLoad()
                     }
                 }
@@ -711,7 +840,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun renderInventory() {
+    private fun renderInventory(position: Int = 0, offset: Int = 0) {
         val apps = inventory ?: return
         val term = query.text.toString().trim()
         val words = term.split(Regex("\\s+")).filter { it.isNotEmpty() }
@@ -725,8 +854,9 @@ class MainActivity : Activity() {
             }
             inScope && words.all { row.title.contains(it, true) || row.name.contains(it, true) }
         }
-        showAppPage(pageSize)
-        results.setSelection(0)
+        val anchor = position.coerceIn(0, (matches.size - 1).coerceAtLeast(0))
+        showAppPage(maxOf(pageSize, anchor + pageSize))
+        results.setSelectionFromTop(anchor, offset)
     }
 
     private fun showAppPage(limit: Int) {
@@ -908,10 +1038,15 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        if (connectionReady) connect()
+        if (connectionReady) {
+            connect()
+            if (!loadingInventory) refreshStaleInventory()
+        }
     }
 
     override fun onDestroy() {
+        unregisterReceiver(packageChanges)
+        refreshHandler.removeCallbacks(refreshInventory)
         Shizuku.removeBinderReceivedListener(received)
         Shizuku.removeBinderDeadListener(dead)
         Shizuku.removeRequestPermissionResultListener(permission)

@@ -3,6 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main, master, 'release/v*']
+    tags: ['v*.*.*']
   pull_request:
     branches: [main]
 jobs:
@@ -49,6 +50,16 @@ jobs:
               exit 1
             fi
           fi
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            if [[ "$GITHUB_REF" != "refs/tags/v$version" || ! "$version" =~ ^${stable}$ ]]; then
+              echo "::error file=$config::Release tag must match the stable Gradle version (vX.Y.Z)"
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor HEAD origin/main; then
+              echo "::error::Release tags must point to a commit on main"
+              exit 1
+            fi
+          fi
           echo "name=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@v5
         with:
@@ -62,9 +73,66 @@ jobs:
         with:
           gradle-version: '9.3.1'
       - name: Build and check the debug APK
+        if: github.ref_type != 'tag'
         run: gradle --no-daemon assembleDebug lintDebug
       - uses: actions/upload-artifact@v4
+        if: github.ref_type != 'tag'
         with:
           name: Debloater-v${{ steps.version.outputs.name }}-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+      - name: Build and check the release APK
+        if: github.ref_type == 'tag'
+        run: gradle --no-daemon assembleRelease lintRelease
+      - name: Sign and verify the release APK
+        if: github.ref_type == 'tag'
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          VERSION: ${{ steps.version.outputs.name }}
+        run: |
+          if [[ -z "$RELEASE_KEYSTORE_BASE64" || -z "$RELEASE_KEYSTORE_PASSWORD" ||
+                -z "$RELEASE_KEY_ALIAS" || -z "$RELEASE_KEY_PASSWORD" ]]; then
+            echo "::error::Configure the Android release signing secrets before publishing"
+            exit 1
+          fi
+          keystore="$(mktemp "$RUNNER_TEMP/debloater.XXXXXX")"
+          trap 'rm -f "$keystore"' EXIT
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          build_tools="$ANDROID_HOME/build-tools/36.0.0"
+          apk="Debloater-v$VERSION.apk"
+          "$build_tools/apksigner" sign --ks "$keystore" --ks-key-alias "$RELEASE_KEY_ALIAS" \
+            --ks-pass env:RELEASE_KEYSTORE_PASSWORD --key-pass env:RELEASE_KEY_PASSWORD \
+            --out "$apk" app/build/outputs/apk/release/app-release-unsigned.apk
+          "$build_tools/apksigner" verify --verbose "$apk"
+          "$build_tools/aapt" dump badging "$apk" > "$RUNNER_TEMP/debloater-apk.txt"
+          grep -F "versionName='$VERSION'" "$RUNNER_TEMP/debloater-apk.txt"
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type == 'tag'
+        with:
+          name: Debloater-release-apk
+          path: Debloater-v${{ steps.version.outputs.name }}.apk
+          if-no-files-found: error
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-${{ github.ref }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Debloater-release-apk
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" "Debloater-$TAG.apk" --verify-tag \
+            --title "Debloater $TAG" --generate-notes
